@@ -32,6 +32,8 @@ import {
   type ScmPatchResult,
   type ScmRemoteActionInput,
   type ScmRemoteActionResult,
+  type ScmShowInput,
+  type ScmShowResult,
   type ScmStageInput,
   type ScmStashInput,
   type ScmStatusInput,
@@ -88,6 +90,7 @@ export class SourceControlPanelService extends Context.Service<
     readonly timeline: (input: ScmTimelineInput) => Effect.Effect<ScmTimelineResult, VcsError>;
     readonly ignore: (input: ScmIgnoreInput) => Effect.Effect<void, VcsError | GitCommandError>;
     readonly patch: (input: ScmPatchInput) => Effect.Effect<ScmPatchResult, VcsError>;
+    readonly show: (input: ScmShowInput) => Effect.Effect<ScmShowResult, VcsError>;
   }
 >()("t3/sourceControl/SourceControlPanelService") {}
 
@@ -1331,6 +1334,33 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /** A file's contents at a revision. `rev:path` reads from the repository root. */
+  const show: SourceControlPanelService["Service"]["show"] = Effect.fn("Scm.show")(
+    function* (input) {
+      const ref = input.ref ?? "HEAD";
+      const result = yield* run("Scm.show", input.cwd, ["show", `${ref}:${input.path}`], {
+        allowNonZeroExit: true,
+        maxOutputBytes: CONTENTS_MAX_OUTPUT_BYTES,
+      });
+      if (result.exitCode !== 0) {
+        return {
+          path: input.path,
+          contents: "",
+          exists: false,
+          binary: false,
+          truncated: false,
+        } satisfies ScmShowResult;
+      }
+      return {
+        path: input.path,
+        contents: result.stdout,
+        exists: true,
+        binary: result.stdoutInvalidUtf8 === true || result.stdout.includes("\0"),
+        truncated: result.stdoutTruncated,
+      } satisfies ScmShowResult;
+    },
+  );
+
   return SourceControlPanelService.of({
     status,
     stage,
@@ -1345,6 +1375,7 @@ export const make = Effect.gen(function* () {
     timeline,
     ignore,
     patch,
+    show,
   });
 });
 

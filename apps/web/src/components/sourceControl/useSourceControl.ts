@@ -13,6 +13,7 @@ import type {
   ScmDiffResult,
   ScmLogInput,
   ScmLogResult,
+  ScmShowResult,
   ScmStatusResult,
   ScmTimelineResult,
   ScmViewInput,
@@ -132,6 +133,20 @@ export function useScmDiff(
   );
   if (input === null) return { data: null, error: null, isPending: false, refresh: state.refresh };
   return state;
+}
+
+/** A file as it was at a revision. Mount only while the file is being shown. */
+export function useScmShow(
+  target: ScmTarget,
+  path: string,
+  ref = "HEAD",
+): ScmQueryState<ScmShowResult> {
+  return useScmQuery<ScmShowResult>(
+    sourceControlPanel.show({
+      environmentId: target.environmentId,
+      input: { cwd: target.cwd, path, ref },
+    }),
+  );
 }
 
 /** Mutations. Each resolves to a result the caller can branch on for a toast. */

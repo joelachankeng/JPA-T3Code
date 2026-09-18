@@ -11,9 +11,15 @@ import {
   folderToneClassName,
   formatScmRelativeTime,
   graphWidth,
+  headPathOf,
+  refOnRemote,
+  remoteFileUrl,
+  remoteTarget,
+  remoteWebBase,
   statusLetter,
   statusTitle,
   syncLabel,
+  workspacePathFor,
 } from "./sourceControlPanel.logic";
 
 function entry(path: string, overrides: Partial<ScmFileEntry> = {}): ScmFileEntry {
@@ -307,5 +313,154 @@ describe("folderToneClassName", () => {
 
   it("reads the staged side for a staged folder", () => {
     expect(tone(["added", "unmodified"])).toBe("bg-success");
+  });
+});
+
+describe("headPathOf", () => {
+  it("names a committed file by its path", () => {
+    expect(headPathOf(entry("a.md", { worktree: "modified" }))).toBe("a.md");
+  });
+
+  it("reads a rename under its old name, which is how HEAD has it", () => {
+    expect(
+      headPathOf(
+        entry("new.md", { previousPath: "old.md", index: "renamed", worktree: "unmodified" }),
+      ),
+    ).toBe("old.md");
+  });
+
+  it("has nothing for a file HEAD never saw", () => {
+    expect(headPathOf(entry("u.md", { worktree: "untracked" }))).toBe(null);
+    expect(headPathOf(entry("a.md", { index: "added", worktree: "unmodified" }))).toBe(null);
+  });
+
+  it("still names a deleted file, whose last committed version is worth reading", () => {
+    expect(headPathOf(entry("gone.md", { worktree: "deleted" }))).toBe("gone.md");
+  });
+});
+
+describe("remoteWebBase", () => {
+  it("reads the scp-like SSH form", () => {
+    expect(remoteWebBase("git@github.com:owner/repo.git")).toBe("https://github.com/owner/repo");
+  });
+
+  it("reads ssh:// and https:// forms, dropping credentials and ports", () => {
+    expect(remoteWebBase("ssh://git@gitlab.com:2222/group/sub/repo.git")).toBe(
+      "https://gitlab.com/group/sub/repo",
+    );
+    expect(remoteWebBase("https://user@github.com/owner/repo")).toBe(
+      "https://github.com/owner/repo",
+    );
+  });
+
+  it("maps Azure DevOps SSH onto its web address", () => {
+    expect(remoteWebBase("git@ssh.dev.azure.com:v3/org/project/repo")).toBe(
+      "https://dev.azure.com/org/project/_git/repo",
+    );
+  });
+
+  it("refuses something that is not a remote URL", () => {
+    expect(remoteWebBase("../local/path")).toBe(null);
+    expect(remoteWebBase("file:///srv/repo.git")).toBe(null);
+  });
+});
+
+describe("remoteFileUrl", () => {
+  const path = "Docs/My File.md";
+
+  it("lays out each host the way that host does", () => {
+    expect(remoteFileUrl({ remoteUrl: "git@github.com:o/r.git", ref: "main", path })).toBe(
+      "https://github.com/o/r/blob/main/Docs/My%20File.md",
+    );
+    expect(remoteFileUrl({ remoteUrl: "https://gitlab.com/o/r.git", ref: "main", path })).toBe(
+      "https://gitlab.com/o/r/-/blob/main/Docs/My%20File.md",
+    );
+    expect(remoteFileUrl({ remoteUrl: "https://bitbucket.org/o/r.git", ref: "main", path })).toBe(
+      "https://bitbucket.org/o/r/src/main/Docs/My%20File.md",
+    );
+    expect(remoteFileUrl({ remoteUrl: "https://codeberg.org/o/r.git", ref: "main", path })).toBe(
+      "https://codeberg.org/o/r/src/branch/main/Docs/My%20File.md",
+    );
+  });
+
+  it("uses a branch or a commit version on Azure DevOps as the ref requires", () => {
+    const remoteUrl = "https://org@dev.azure.com/org/project/_git/repo";
+    expect(remoteFileUrl({ remoteUrl, ref: "main", path: "a.md" })).toBe(
+      "https://dev.azure.com/org/project/_git/repo?path=/a.md&version=GBmain",
+    );
+    expect(remoteFileUrl({ remoteUrl, ref: "045faf4", path: "a.md" })).toBe(
+      "https://dev.azure.com/org/project/_git/repo?path=/a.md&version=GC045faf4",
+    );
+  });
+
+  it("keeps the slashes of a branch name as path separators", () => {
+    expect(
+      remoteFileUrl({ remoteUrl: "git@github.com:o/r.git", ref: "feature/login", path: "a.md" }),
+    ).toBe("https://github.com/o/r/blob/feature/login/a.md");
+  });
+});
+
+describe("remoteTarget", () => {
+  const remotes = [
+    { name: "upstream", fetchUrl: "git@github.com:org/r.git", pushUrl: null },
+    { name: "origin", fetchUrl: "git@github.com:me/r.git", pushUrl: null },
+  ];
+
+  it("uses the branch's upstream, because that is what the host has", () => {
+    expect(
+      remoteTarget({ upstream: "upstream/dev", headSha: "abc1234", branch: "dev", remotes }),
+    ).toEqual({ remoteName: "upstream", remoteUrl: "git@github.com:org/r.git", ref: "dev" });
+  });
+
+  it("falls back to the current commit on origin when the branch is unpublished", () => {
+    expect(remoteTarget({ upstream: null, headSha: "abc1234", branch: "local", remotes })).toEqual({
+      remoteName: "origin",
+      remoteUrl: "git@github.com:me/r.git",
+      ref: "abc1234",
+    });
+  });
+
+  it("has nothing to offer without a remote", () => {
+    expect(remoteTarget({ upstream: null, headSha: "abc", branch: "main", remotes: [] })).toBe(
+      null,
+    );
+  });
+});
+
+describe("refOnRemote", () => {
+  it("drops the remote's own prefix from a remote-tracking branch", () => {
+    expect(refOnRemote("origin/main", "origin")).toBe("main");
+    expect(refOnRemote("v1.2.0", "origin")).toBe("v1.2.0");
+  });
+});
+
+describe("workspacePathFor", () => {
+  it("is the repository path itself when the project is the repository", () => {
+    expect(workspacePathFor("docs/a.md", "/repo", "/repo")).toEqual({
+      relative: "docs/a.md",
+      absolute: "/repo/docs/a.md",
+    });
+  });
+
+  it("strips the project's own folder when the project sits below the root", () => {
+    expect(workspacePathFor("apps/server/src/ws.ts", "/repo", "/repo/apps/server").relative).toBe(
+      "src/ws.ts",
+    );
+  });
+
+  it("names a file outside the project absolutely", () => {
+    expect(workspacePathFor("apps/web/x.ts", "/repo", "/repo/apps/server")).toEqual({
+      relative: null,
+      absolute: "/repo/apps/web/x.ts",
+    });
+  });
+
+  it("matches Windows paths without regard to case or slash direction", () => {
+    expect(
+      workspacePathFor("apps/server/a.ts", "C:\\Repo\\T3", "c:/repo/t3/apps/server").relative,
+    ).toBe("a.ts");
+    expect(workspacePathFor("a.ts", "C:\\Repo\\T3", "C:\\Repo\\T3").absolute).toBe(
+      "C:\\Repo\\T3\\a.ts",
+    );
   });
 });

@@ -58,6 +58,12 @@ export function createSourceControlPanelAtoms<R, E>(
       staleTimeMs: 2_000,
       idleTtlMs: 60_000,
     }),
+    show: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:scm:show",
+      tag: WS_METHODS.scmShow,
+      staleTimeMs: 5_000,
+      idleTtlMs: 60_000,
+    }),
     timeline: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:scm:timeline",
       tag: WS_METHODS.scmTimeline,

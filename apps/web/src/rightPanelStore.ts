@@ -54,7 +54,14 @@ export type RightPanelSurface =
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
-  | { id: "files"; kind: "files" }
+  | {
+      id: "files";
+      kind: "files";
+      /** A file to select in the tree, as VS Code's "Reveal in Explorer View" does. */
+      revealPath?: string;
+      /** Bumped so revealing the same file again scrolls to it again. */
+      revealRequestId?: number;
+    }
   | {
       id: `file:${string}` | `attachment:${string}`;
       kind: "file";
@@ -153,6 +160,8 @@ interface RightPanelStoreState {
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openTimeline: (ref: ScopedThreadRef, relativePath: string, view?: "list" | "visual") => void;
+  /** Open the Files surface with a file selected in its tree, without opening the file. */
+  revealInFiles: (ref: ScopedThreadRef, relativePath: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -665,6 +674,26 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               surfaces: current.surfaces.map((entry) =>
                 entry.id === surface.id ? surface : entry,
               ),
+            };
+          }),
+        ),
+      revealInFiles: (ref, relativePath) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const existing = current.surfaces.find((surface) => surface.kind === "files");
+            const surface: RightPanelSurface = {
+              id: "files",
+              kind: "files",
+              revealPath: relativePath,
+              revealRequestId:
+                (existing?.kind === "files" ? (existing.revealRequestId ?? 0) : 0) + 1,
+            };
+            return {
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: existing
+                ? current.surfaces.map((entry) => (entry.id === surface.id ? surface : entry))
+                : [...current.surfaces, surface],
             };
           }),
         ),

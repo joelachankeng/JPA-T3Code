@@ -9,6 +9,7 @@
  * Presentation state lives in a store rather than in this component, because
  * the panel unmounts whenever another surface is brought forward.
  */
+import { useAtomValue } from "@effect/atom-react";
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
@@ -38,16 +39,35 @@ import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
+import { readLocalApi } from "~/localApi";
+import { serverEnvironment } from "~/state/server";
+import { shellEnvironment } from "~/state/shell";
+import { useAtomCommand } from "~/state/use-atom-command";
 
+import {
+  revealInFileExplorerLabelForKind,
+  revealInFileExplorerLabelForOs,
+} from "../preview/fileExplorerLabel";
 import { GitLensAccordion } from "./GitLensAccordion";
+import { ScmFileAtRef } from "./ScmFileAtRef";
+import type { ScmFileMenuId } from "./scmMenus";
 import {
   SourceControlChanges,
+  type ScmFileActions,
   type ScmFolderActions,
   type ScmGroupId,
 } from "./SourceControlChanges";
 import { ScmRefPickerDialog, type ScmRefPickerKind } from "./ScmRefPickerDialog";
 import { SourceControlGraph } from "./SourceControlGraph";
-import { fileName, syncLabel } from "./sourceControlPanel.logic";
+import {
+  fileName,
+  headPathOf,
+  refOnRemote,
+  remoteFileUrl,
+  remoteTarget,
+  syncLabel,
+  workspacePathFor,
+} from "./sourceControlPanel.logic";
 import {
   scmUiKey,
   selectScmUiState,
@@ -84,7 +104,19 @@ type DiffSelection =
   /** `path` null shows every file the commit touched, as the graph row does. */
   | { kind: "commit"; path: string | null; sha: string; subject: string }
   /** A path in the working tree against a revision, from "Open Changes with". */
-  | { kind: "compare"; path: string; ref: string; label: string };
+  | { kind: "compare"; path: string; ref: string; label: string }
+  /** A file as HEAD has it, from "Open File (HEAD)". */
+  | { kind: "head"; path: string };
+
+/**
+ * What a revision picker is open for. Comparing and quick history pick a
+ * commit or ref for a path; the remote actions pick where on the host to link.
+ */
+type PickerRequest = {
+  readonly kind: ScmRefPickerKind;
+  readonly path: string;
+  readonly purpose: "compare" | "history" | "remote-open" | "remote-copy";
+};
 
 function Section(props: {
   readonly title: string;
@@ -125,6 +157,8 @@ export interface SourceControlPanelProps {
   readonly onOpenFile: (relativePath: string) => void;
   /** Opens the file's timeline in its own surface. */
   readonly onOpenTimeline: (relativePath: string, view?: "list" | "visual") => void;
+  /** Selects a workspace file in the Files surface, as "Reveal in Explorer View" does. */
+  readonly onRevealInFiles: (relativePath: string) => void;
   /** The file the user is looking at elsewhere, so File History has a subject. */
   readonly activeFilePath: string | null;
 }
@@ -176,7 +210,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   // A pinned folder or file wins over whichever file happens to be open.
   const historyPath = ui.historyPath ?? props.activeFilePath;
   const fileHistory = useScmTimeline(target, historyPath ?? "", 50);
-  const [picker, setPicker] = useState<{ kind: ScmRefPickerKind; path: string } | null>(null);
+  const [picker, setPicker] = useState<PickerRequest | null>(null);
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const pendingReveal = useRef<ScmSectionId | null>(null);
@@ -408,8 +444,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           });
         }
       })(),
-    openChangesWithRevision: (folder) => setPicker({ kind: "revision", path: folder }),
-    openChangesWithRef: (folder) => setPicker({ kind: "ref", path: folder }),
+    openChangesWithRevision: (folder) =>
+      setPicker({ kind: "revision", path: folder, purpose: "compare" }),
+    openChangesWithRef: (folder) => setPicker({ kind: "ref", path: folder, purpose: "compare" }),
     openHistory: (folder) =>
       revealSection("gitlens", {
         gitLensView: "file-history",
@@ -420,8 +457,128 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     openVisualHistory: (folder) => props.onOpenTimeline(folder, "visual"),
   };
 
+  const repositoryState = status.data?.repository ?? null;
+  const remote = repositoryState ? remoteTarget(repositoryState) : null;
+
+  /** A repository path in the project's terms, for the Files surface and copying. */
+  const workspacePath = (repoPath: string) =>
+    workspacePathFor(repoPath, repositoryState?.root ?? null, props.cwd);
+
+  const openFile = (repoPath: string) => {
+    const { relative } = workspacePath(repoPath);
+    if (relative !== null) props.onOpenFile(relative);
+    else toastManager.add({ type: "info", title: "This file is outside the project" });
+  };
+
+  const copyText = async (text: string, title: string) => {
+    try {
+      await writeTextToClipboard(text);
+      toastManager.add({ type: "success", title });
+    } catch (error) {
+      toastManager.add({
+        type: "error",
+        title: "Unable to copy",
+        description: error instanceof Error ? error.message : "The clipboard refused it.",
+      });
+    }
+  };
+
+  /** Open or copy a file's page on its host, at `ref` or where the branch is published. */
+  const shareRemote = (path: string, action: "open" | "copy", ref?: string) => {
+    if (!remote) return;
+    const url = remoteFileUrl({
+      remoteUrl: remote.remoteUrl,
+      ref: ref === undefined ? remote.ref : refOnRemote(ref, remote.remoteName),
+      path,
+    });
+    if (!url) {
+      toastManager.add({ type: "error", title: "This remote has no web address to link to" });
+      return;
+    }
+    if (action === "copy") void copyText(url, "Remote file URL copied");
+    else void readLocalApi()?.shell.openExternal(url);
+  };
+
+  const revealInFileManagerLabel =
+    serverConfig?.shellRevealInFileManager === true &&
+    serverConfig.availableEditors.includes("file-manager")
+      ? serverConfig.shellRevealInFileManagerKind === undefined
+        ? revealInFileExplorerLabelForOs(serverConfig.environment.platform.os)
+        : revealInFileExplorerLabelForKind(serverConfig.shellRevealInFileManagerKind)
+      : null;
+
+  const revealInFileManager = async (repoPath: string) => {
+    const result = await openInEditor({
+      environmentId: props.environmentId,
+      input: { cwd: workspacePath(repoPath).absolute, editor: "file-manager", reveal: true },
+    });
+    if (result._tag === "Success") return;
+    toastManager.add({
+      type: "error",
+      title: "Unable to reveal the file",
+      description: commandErrorMessage(result.cause),
+    });
+  };
+
+  const runFileAction = (id: ScmFileMenuId, entry: ScmFileEntry, staged: boolean) => {
+    // HEAD and the host know a renamed file by its old name.
+    const headPath = headPathOf(entry) ?? entry.path;
+    const inProject = workspacePath(entry.path).relative;
+    switch (id) {
+      case "compare-revision":
+        return setPicker({ kind: "revision", path: entry.path, purpose: "compare" });
+      case "compare-ref":
+        return setPicker({ kind: "ref", path: entry.path, purpose: "compare" });
+      case "open-head":
+        return setSelection({ kind: "head", path: headPath });
+      case "remote-open":
+        return shareRemote(headPath, "open");
+      case "remote-copy":
+        return shareRemote(headPath, "copy");
+      case "remote-open-from":
+        return setPicker({ kind: "ref", path: headPath, purpose: "remote-open" });
+      case "remote-copy-from":
+        return setPicker({ kind: "ref", path: headPath, purpose: "remote-copy" });
+      case "history":
+        return revealSection("gitlens", {
+          gitLensView: "file-history",
+          historyPath: entry.path,
+          historyIsFolder: false,
+        });
+      case "history-graph":
+        return revealSection("graph", { graphPath: entry.path });
+      case "history-visual":
+        return props.onOpenTimeline(entry.path, "visual");
+      case "history-quick":
+        return setPicker({ kind: "revision", path: entry.path, purpose: "history" });
+      case "gitignore":
+        return folderActions.addToGitignore([entry.path]);
+      case "copy-patch":
+        return folderActions.copyPatch(
+          entry.previousPath ? [entry.path, entry.previousPath] : [entry.path],
+          staged,
+        );
+      case "copy-path":
+        return void copyText(inProject ?? workspacePath(entry.path).absolute, "Path copied");
+      case "reveal-files":
+        if (inProject !== null) props.onRevealInFiles(inProject);
+        else toastManager.add({ type: "info", title: "This file is outside the project" });
+        return;
+      case "reveal-os":
+        return void revealInFileManager(entry.path);
+      default:
+        return;
+    }
+  };
+
+  const fileActions: ScmFileActions = {
+    hasRemote: remote !== null,
+    revealInFileManagerLabel,
+    run: runFileAction,
+  };
+
   const diffInput: Omit<ScmDiffInput, "cwd"> | null = useMemo(() => {
-    if (!selection) return null;
+    if (!selection || selection.kind === "head") return null;
     // The panel renders patches only, so neither side's full text is fetched.
     if (selection.kind === "commit") {
       return {
@@ -459,6 +616,34 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         <p className="text-muted-foreground text-xs">
           {props.projectName} is not a git repository, so there is no source control to show.
         </p>
+      </div>
+    );
+  }
+
+  if (selection?.kind === "head") {
+    const title = `${fileName(selection.path)} (HEAD)`;
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <header className="flex h-8 shrink-0 items-center gap-1.5 border-border/60 border-b px-2">
+          <Button
+            type="button"
+            variant="ghost-muted"
+            size="icon-xs"
+            aria-label="Back to source control"
+            onClick={() => setSelection(null)}
+          >
+            <ArrowLeft className="size-3.5" />
+          </Button>
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="min-w-0 flex-1 truncate text-foreground text-xs" />}
+            >
+              {title}
+            </TooltipTrigger>
+            <TooltipPopup>{selection.path}</TooltipPopup>
+          </Tooltip>
+        </header>
+        <ScmFileAtRef target={target} path={selection.path} gitRef="HEAD" />
       </div>
     );
   }
@@ -627,17 +812,39 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         environmentId={props.environmentId}
         cwd={props.cwd}
         path={picker?.path ?? ""}
+        {...(picker?.purpose === "history"
+          ? { prompt: `Choose a commit of ${picker.path} to open`, actionLabel: "Open" }
+          : picker?.purpose === "remote-open"
+            ? { prompt: `Open ${picker.path} on the remote from…`, actionLabel: "Open" }
+            : picker?.purpose === "remote-copy"
+              ? { prompt: `Copy the remote URL of ${picker.path} from…`, actionLabel: "Copy" }
+              : {})}
         onOpenChange={(open) => {
           if (!open) setPicker(null);
         }}
         onChoose={(choice) => {
           if (!picker) return;
-          setSelection({
-            kind: "compare",
-            path: picker.path,
-            ref: choice.ref,
-            label: choice.label,
-          });
+          if (picker.purpose === "history") {
+            setSelection({
+              kind: "commit",
+              path: picker.path,
+              sha: choice.ref,
+              subject: choice.label,
+            });
+          } else if (picker.purpose === "compare") {
+            setSelection({
+              kind: "compare",
+              path: picker.path,
+              ref: choice.ref,
+              label: choice.label,
+            });
+          } else {
+            shareRemote(
+              picker.path,
+              picker.purpose === "remote-open" ? "open" : "copy",
+              choice.ref,
+            );
+          }
         }}
       />
       <ScrollArea className="min-h-0 flex-1">
@@ -668,10 +875,11 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 onDiscard={(entries) => void discard(entries)}
                 onStash={stash}
                 onOpenDiff={(entry, staged) => setSelection({ kind: "working", entry, staged })}
-                onOpenFile={props.onOpenFile}
+                onOpenFile={openFile}
                 onOpenTimeline={props.onOpenTimeline}
                 onAcceptSide={acceptSide}
                 folderActions={folderActions}
+                fileActions={fileActions}
               />
             ) : (
               <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>

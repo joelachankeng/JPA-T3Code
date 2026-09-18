@@ -105,6 +105,8 @@ interface FilePreviewPanelProps {
   revealRequestId: number;
   onOpenFile: (relativePath: string) => void;
   onOpenTimeline: (relativePath: string) => void;
+  /** Selected in the tree without being opened, from "Reveal in Explorer View". */
+  revealPath?: string | null;
   onPendingChange: (relativePath: string, pending: boolean) => void;
   selectedFilePending: boolean;
   workspaceMutationId: string | null;
@@ -918,6 +920,7 @@ export default function FilePreviewPanel({
   revealRequestId,
   onOpenFile,
   onOpenTimeline,
+  revealPath = null,
   onPendingChange,
   selectedFilePending,
   workspaceMutationId,
@@ -1298,7 +1301,7 @@ export default function FilePreviewPanel({
               environmentId={environmentId}
               cwd={cwd}
               projectName={projectName}
-              selectedPath={relativePath}
+              selectedPath={relativePath ?? revealPath}
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               onOpenTimeline={onOpenTimeline}

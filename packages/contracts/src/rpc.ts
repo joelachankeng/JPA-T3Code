@@ -37,6 +37,8 @@ import {
   ScmPatchInput,
   ScmPatchResult,
   ScmRemoteActionInput,
+  ScmShowInput,
+  ScmShowResult,
   ScmRemoteActionResult,
   ScmStageInput,
   ScmStashInput,
@@ -358,6 +360,7 @@ export const WS_METHODS = {
   scmTimeline: "scm.timeline",
   scmIgnore: "scm.ignore",
   scmPatch: "scm.patch",
+  scmShow: "scm.show",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -1147,6 +1150,12 @@ const WsScmIgnoreRpc = Rpc.make(WS_METHODS.scmIgnore, {
   error: ScmError,
 });
 
+const WsScmShowRpc = Rpc.make(WS_METHODS.scmShow, {
+  payload: ScmShowInput,
+  success: ScmShowResult,
+  error: ScmError,
+});
+
 const WsScmPatchRpc = Rpc.make(WS_METHODS.scmPatch, {
   payload: ScmPatchInput,
   success: ScmPatchResult,
@@ -1593,6 +1602,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsScmTimelineRpc,
   WsScmIgnoreRpc,
   WsScmPatchRpc,
+  WsScmShowRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,

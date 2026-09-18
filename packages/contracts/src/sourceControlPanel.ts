@@ -466,6 +466,27 @@ export const ScmPatchResult = Schema.Struct({
 });
 export type ScmPatchResult = typeof ScmPatchResult.Type;
 
+// RPC: a file as it was at a revision, for "Open File (HEAD)"
+
+export const ScmShowInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  path: ScmPath,
+  /** Any revision git accepts. Defaults to HEAD. */
+  ref: Schema.optional(TrimmedNonEmptyString),
+});
+export type ScmShowInput = typeof ScmShowInput.Type;
+
+export const ScmShowResult = Schema.Struct({
+  path: ScmPath,
+  contents: Schema.String,
+  /** False when the file does not exist at that revision, such as a new file. */
+  exists: Schema.Boolean,
+  /** True when the contents are not valid UTF-8; the panel shows a notice instead. */
+  binary: Schema.Boolean,
+  truncated: Schema.Boolean,
+});
+export type ScmShowResult = typeof ScmShowResult.Type;
+
 // RPC: file timeline
 
 export const ScmTimelineInput = Schema.Struct({

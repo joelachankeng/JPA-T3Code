@@ -4690,6 +4690,13 @@ export default function ChatView(props: ChatViewProps) {
     },
     [activeProject, activeThreadRef],
   );
+  const revealInFilesSurface = useCallback(
+    (relativePath: string) => {
+      if (!activeThreadRef || !activeProject) return;
+      useRightPanelStore.getState().revealInFiles(activeThreadRef, relativePath);
+    },
+    [activeProject, activeThreadRef],
+  );
   const openTimelineSurface = useCallback(
     (relativePath: string, view?: "list" | "visual") => {
       if (!activeThreadRef || !activeProject) return;
@@ -9719,6 +9726,7 @@ export default function ChatView(props: ChatViewProps) {
           projectName={activeProject.title}
           onOpenFile={openFileSurface}
           onOpenTimeline={openTimelineSurface}
+          onRevealInFiles={revealInFilesSurface}
           activeFilePath={activeRightPanelFilePath}
         />
       </Suspense>
@@ -9768,7 +9776,12 @@ export default function ChatView(props: ChatViewProps) {
           revealRequestId={
             renderedRightPanelSurface.kind === "file"
               ? renderedRightPanelSurface.revealRequestId
-              : 0
+              : (renderedRightPanelSurface.revealRequestId ?? 0)
+          }
+          revealPath={
+            renderedRightPanelSurface.kind === "files"
+              ? (renderedRightPanelSurface.revealPath ?? null)
+              : null
           }
           onOpenFile={openFileSurface}
           onOpenTimeline={openTimelineSurface}

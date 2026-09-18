@@ -385,3 +385,154 @@ export function syncLabel(input: {
   if (input.ahead > 0) parts.push(`${input.ahead} to push`);
   return `Sync Changes — ${parts.join(", ")}`;
 }
+
+/**
+ * The path a file had in HEAD, or null when HEAD never had it. A rename or a
+ * copy is committed under its old name, so that is the name to read.
+ */
+export function headPathOf(
+  entry: Pick<ScmFileEntry, "path" | "previousPath" | "index" | "worktree">,
+): string | null {
+  if (entry.previousPath) return entry.previousPath;
+  const state = entry.worktree === "unmodified" ? entry.index : entry.worktree;
+  return state === "added" || state === "untracked" ? null : entry.path;
+}
+
+/** A repository's web address, parsed from any of the URL shapes git accepts for a remote. */
+export function remoteWebBase(remoteUrl: string): string | null {
+  const trimmed = remoteUrl.trim().replace(/\/+$/, "");
+  let host: string;
+  let pathname: string;
+  const scp = /^[^@/\s]+@([^:/\s]+):(.+)$/.exec(trimmed);
+  if (scp && !trimmed.includes("://")) {
+    host = scp[1] ?? "";
+    pathname = scp[2] ?? "";
+  } else {
+    try {
+      const url = new URL(trimmed);
+      if (!/^(https?|ssh|git):$/.test(url.protocol)) return null;
+      host = url.hostname;
+      pathname = url.pathname;
+    } catch {
+      return null;
+    }
+  }
+  pathname = pathname.replace(/^\/+/, "").replace(/\.git$/, "");
+  if (!host || !pathname) return null;
+  // Azure DevOps SSH is `ssh.dev.azure.com:v3/org/project/repo`; its web home
+  // is `dev.azure.com/org/project/_git/repo`.
+  if (host === "ssh.dev.azure.com") {
+    const [, org, project, repo] = pathname.split("/");
+    if (!org || !project || !repo) return null;
+    return `https://dev.azure.com/${org}/${project}/_git/${repo}`;
+  }
+  return `https://${host}/${pathname}`;
+}
+
+const SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
+
+function encodeSegments(value: string): string {
+  return value
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+/**
+ * Where a file is shown on its host, for "Open File on Remote" and "Copy
+ * Remote File URL". Hosts are recognised by name; an unknown one is assumed to
+ * lay out URLs like GitHub, which most self-hosted forges copy.
+ */
+export function remoteFileUrl(input: {
+  readonly remoteUrl: string;
+  readonly ref: string;
+  readonly path: string;
+}): string | null {
+  const base = remoteWebBase(input.remoteUrl);
+  if (!base) return null;
+  const host = new URL(base).hostname.toLowerCase();
+  const ref = encodeSegments(input.ref);
+  const path = encodeSegments(input.path);
+  const isCommit = SHA_PATTERN.test(input.ref);
+  if (host.includes("dev.azure.com") || host.endsWith("visualstudio.com")) {
+    return `${base}?path=/${path}&version=${isCommit ? "GC" : "GB"}${ref}`;
+  }
+  if (host.includes("gitlab")) return `${base}/-/blob/${ref}/${path}`;
+  if (host === "bitbucket.org") return `${base}/src/${ref}/${path}`;
+  if (host.includes("codeberg") || host.includes("gitea") || host.includes("forgejo")) {
+    return `${base}/src/${isCommit ? "commit" : "branch"}/${ref}/${path}`;
+  }
+  return `${base}/blob/${ref}/${path}`;
+}
+
+/**
+ * Which remote and ref a file's web page lives under: the branch's upstream
+ * when it has one, since that is what the host has; otherwise the current
+ * commit on `origin`, or on the first remote there is.
+ */
+export function remoteTarget(repository: {
+  readonly upstream: string | null;
+  readonly headSha: string | null;
+  readonly branch: string | null;
+  readonly remotes: ReadonlyArray<{
+    readonly name: string;
+    readonly fetchUrl: string | null;
+    readonly pushUrl: string | null;
+  }>;
+}): { readonly remoteName: string; readonly remoteUrl: string; readonly ref: string } | null {
+  const upstream = repository.upstream;
+  const upstreamRemote = upstream
+    ? repository.remotes.find((remote) => upstream.startsWith(`${remote.name}/`))
+    : undefined;
+  const remote =
+    upstreamRemote ??
+    repository.remotes.find((candidate) => candidate.name === "origin") ??
+    repository.remotes[0];
+  const remoteUrl = remote?.fetchUrl ?? remote?.pushUrl;
+  if (!remote || !remoteUrl) return null;
+  const ref =
+    upstreamRemote && upstream
+      ? upstream.slice(upstreamRemote.name.length + 1)
+      : (repository.headSha ?? repository.branch);
+  if (!ref) return null;
+  return { remoteName: remote.name, remoteUrl, ref };
+}
+
+/** A ref from the picker as the remote names it: `origin/main` is `main` there. */
+export function refOnRemote(ref: string, remoteName: string): string {
+  return ref.startsWith(`${remoteName}/`) ? ref.slice(remoteName.length + 1) : ref;
+}
+
+function normalizeHostPath(value: string): string {
+  const forward = value.replaceAll("\\", "/").replace(/\/+$/, "");
+  // Windows paths compare without regard to case.
+  return /^[a-z]:\//i.test(forward) ? forward.toLowerCase() : forward;
+}
+
+/**
+ * Translate a repository-relative path into the project's own terms. Git
+ * reports paths from the repository root, but the Files surface and "Copy
+ * Relative Path" speak relative to the project directory, which can sit below
+ * that root. A file outside the project has no relative path there and is
+ * named absolutely instead.
+ */
+export function workspacePathFor(
+  repoPath: string,
+  repoRoot: string | null,
+  cwd: string,
+): { readonly relative: string | null; readonly absolute: string } {
+  if (!repoRoot) return { relative: repoPath, absolute: repoPath };
+  const separator = repoRoot.includes("\\") ? "\\" : "/";
+  const absolute = `${repoRoot.replace(/[\\/]+$/, "")}${separator}${repoPath.replaceAll("/", separator)}`;
+  const root = normalizeHostPath(repoRoot);
+  const project = normalizeHostPath(cwd);
+  if (project === root) return { relative: repoPath, absolute };
+  if (!project.startsWith(`${root}/`)) return { relative: null, absolute };
+  const prefix = cwd
+    .replaceAll("\\", "/")
+    .replace(/\/+$/, "")
+    .slice(root.length + 1);
+  return repoPath.startsWith(`${prefix}/`)
+    ? { relative: repoPath.slice(prefix.length + 1), absolute }
+    : { relative: null, absolute };
+}

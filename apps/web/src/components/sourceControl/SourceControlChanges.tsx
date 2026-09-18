@@ -22,6 +22,7 @@ import { memo, useMemo, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
+import { fileMenuItems, type ScmFileMenuId } from "./scmMenus";
 import { useScmContextMenu } from "./useScmContextMenu";
 import { Textarea } from "~/components/ui/textarea";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
@@ -65,6 +66,17 @@ export interface SourceControlChangesProps {
   readonly onAcceptSide: (side: "ours" | "theirs", paths: readonly string[]) => void;
   /** The folder menu's actions, named as VS Code names them. */
   readonly folderActions: ScmFolderActions;
+  /** The file menu's actions beyond the ones a row handles itself. */
+  readonly fileActions: ScmFileActions;
+}
+
+/** What a file's right-click menu needs from the panel. */
+export interface ScmFileActions {
+  readonly hasRemote: boolean;
+  /** The host's wording for revealing a file, or null when it cannot. */
+  readonly revealInFileManagerLabel: string | null;
+  /** Views, history, reveal, share and copy: everything but the row's own actions. */
+  readonly run: (id: ScmFileMenuId, entry: ScmFileEntry, staged: boolean) => void;
 }
 
 /** What a folder's right-click menu can do, beyond staging and discarding. */
@@ -131,6 +143,7 @@ const FileRow = memo(function FileRow(props: {
   readonly onStash: () => void;
   readonly onAcceptOurs: () => void;
   readonly onAcceptTheirs: () => void;
+  readonly fileActions: ScmFileActions;
 }) {
   const { resolvedTheme } = useTheme();
   const showContextMenu = useScmContextMenu();
@@ -139,35 +152,21 @@ const FileRow = memo(function FileRow(props: {
   // A deleted file has nothing on disk to open, so it is not offered.
   const openable = canOpenFile(props.entry);
 
-  // The same entries VS Code puts on a changed file, through the shared host
-  // menu so the desktop app gets a native one and the browser its fallback.
+  // VS Code's menu for a file in this group, through the shared host menu so
+  // the desktop app gets a native one and the browser its fallback.
   const openMenu = (event: React.MouseEvent) => {
     event.preventDefault();
+    const actions = props.fileActions;
     void showContextMenu(
-      [
-        { id: "open-changes", label: "Open Changes" },
-        ...(openable ? ([{ id: "open-file", label: "Open File" }] as const) : []),
-        { id: "open-timeline", label: "Open Timeline", icon: "clock", separatorBefore: true },
-        ...(props.group === "merge"
-          ? ([
-              {
-                id: "accept-ours",
-                label: "Accept Current Change",
-                separatorBefore: true,
-              },
-              { id: "accept-theirs", label: "Accept Incoming Change" },
-            ] as const)
-          : []),
-        ...(staged
-          ? ([{ id: "unstage", label: "Unstage Changes", separatorBefore: true }] as const)
-          : ([
-              { id: "discard", label: "Discard Changes", separatorBefore: true },
-              { id: "stage", label: "Stage Changes" },
-              { id: "stash", label: "Stash Changes…" },
-            ] as const)),
-      ],
+      fileMenuItems({
+        group: props.group,
+        entry: props.entry,
+        hasRemote: actions.hasRemote,
+        revealInFileManagerLabel: actions.revealInFileManagerLabel,
+      }),
       { x: event.clientX, y: event.clientY },
     ).then((clicked) => {
+      if (clicked === null) return;
       if (clicked === "open-changes") props.onOpenDiff();
       else if (clicked === "open-file") props.onOpenFile();
       else if (clicked === "open-timeline") props.onOpenTimeline();
@@ -176,6 +175,7 @@ const FileRow = memo(function FileRow(props: {
       else if (clicked === "stage" || clicked === "unstage") props.onPrimaryAction();
       else if (clicked === "discard") props.onDiscard();
       else if (clicked === "stash") props.onStash();
+      else actions.run(clicked, props.entry, staged);
     });
   };
 
@@ -536,6 +536,7 @@ function ChangeGroup(props: {
                 onStash={() => props.changes.onStash([row.entry.path])}
                 onAcceptOurs={() => props.changes.onAcceptSide("ours", [row.entry.path])}
                 onAcceptTheirs={() => props.changes.onAcceptSide("theirs", [row.entry.path])}
+                fileActions={props.changes.fileActions}
               />
             ),
           )}

@@ -124,8 +124,12 @@ export function ScmRefPickerDialog(props: {
   readonly kind: ScmRefPickerKind;
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
-  /** The folder being compared, named in the prompt and used to narrow revisions. */
+  /** The file or folder being acted on; it narrows the revisions offered. */
   readonly path: string;
+  /** What the picker is for, shown in its input. Defaults to a comparison prompt. */
+  readonly prompt?: string;
+  /** Label for Enter in the footer. */
+  readonly actionLabel?: string;
   readonly onOpenChange: (open: boolean) => void;
   readonly onChoose: (choice: ScmRefChoice) => void;
 }) {
@@ -133,9 +137,10 @@ export function ScmRefPickerDialog(props: {
   const [highlighted, setHighlighted] = useState<string | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const label =
-    props.kind === "revision"
+    props.prompt ??
+    (props.kind === "revision"
       ? `Choose a commit to compare ${props.path} with`
-      : `Choose a branch or tag to compare ${props.path} with`;
+      : `Choose a branch or tag to compare ${props.path} with`);
 
   const choose = (choice: ScmRefChoice) => {
     props.onOpenChange(false);
@@ -172,7 +177,7 @@ export function ScmRefPickerDialog(props: {
           : query.trim()
             ? "Nothing matches."
             : props.kind === "revision"
-              ? "No commits touch this folder."
+              ? "No commits touch this path."
               : "No branches or tags.")
       }
     />
@@ -190,7 +195,7 @@ export function ScmRefPickerDialog(props: {
             aria-label={label}
             autoHighlight="always"
             escapeLabel="Close"
-            footerActionLabel="Compare"
+            footerActionLabel={props.actionLabel ?? "Compare"}
             inputProps={{ placeholder: label }}
             mode="none"
             onItemHighlighted={(value) => setHighlighted(typeof value === "string" ? value : null)}

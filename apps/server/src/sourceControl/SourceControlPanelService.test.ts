@@ -151,6 +151,48 @@ it.layer(TestLayer)("SourceControlPanelService", (it) => {
     );
   });
 
+  describe("show", () => {
+    it.effect("reads the committed version, not the edited working copy", () =>
+      Effect.gen(function* () {
+        const root = yield* makeRepository;
+        const service = yield* SourceControlPanelService.SourceControlPanelService;
+        write(root, "docs/a.md", "edited on disk" + String.fromCharCode(10));
+
+        const result = yield* service.show({ cwd: root, path: "docs/a.md" });
+
+        assert.isTrue(result.exists);
+        assert.strictEqual(result.contents, "alpha" + String.fromCharCode(10));
+      }),
+    );
+
+    it.effect("reports a file that is not in HEAD rather than failing", () =>
+      Effect.gen(function* () {
+        const root = yield* makeRepository;
+        const service = yield* SourceControlPanelService.SourceControlPanelService;
+        write(root, "docs/new.md", "new");
+
+        const result = yield* service.show({ cwd: root, path: "docs/new.md" });
+
+        assert.isFalse(result.exists);
+        assert.strictEqual(result.contents, "");
+      }),
+    );
+
+    it.effect("reads a repository-root path from a project below the root", () =>
+      Effect.gen(function* () {
+        const root = yield* makeRepository;
+        const service = yield* SourceControlPanelService.SourceControlPanelService;
+
+        const result = yield* service.show({
+          cwd: NodePath.join(root, "docs"),
+          path: "docs/b.md",
+        });
+
+        assert.strictEqual(result.contents, "bravo" + String.fromCharCode(10));
+      }),
+    );
+  });
+
   describe("log", () => {
     it.effect("links a path-filtered history through the commits it kept", () =>
       Effect.gen(function* () {

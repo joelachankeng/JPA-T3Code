@@ -105,10 +105,11 @@ The surface has three sections:
   and tags pointing at each commit. Select a commit to see everything it changed. The filter at the
   top switches between the current branch and all branches.
 
-In the folder tree, right-click a folder for the same menu VS Code offers: stage, unstage or
-discard everything in it, add its files to `.gitignore`, copy its changes as a patch, compare it
-with an earlier commit or with a branch or tag, or open its history as a list, filtered into the
-graph, or as a chart of commits over time.
+Right-click a changed file or, in the folder tree, a folder for the same menu VS Code offers: stage,
+unstage, discard or stash it, add it to `.gitignore`, copy its changes as a patch, compare it with an
+earlier commit or with a branch or tag, or open its history as a list, filtered into the graph, or as
+a chart of commits over time. A file's menu can also show the version in HEAD, open or copy its link
+on the remote's website, reveal it in the Files surface or your file manager, and copy its path.
 
 The button beside the branch name in the header syncs with the upstream branch and shows how many
 commits are waiting in each direction. On a branch that has no upstream yet, it publishes the branch.

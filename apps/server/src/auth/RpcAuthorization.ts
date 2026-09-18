@@ -133,6 +133,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.scmDiff]: AuthOrchestrationReadScope,
   [WS_METHODS.scmTimeline]: AuthOrchestrationReadScope,
   [WS_METHODS.scmPatch]: AuthOrchestrationReadScope,
+  [WS_METHODS.scmShow]: AuthOrchestrationReadScope,
   [WS_METHODS.scmIgnore]: AuthOrchestrationOperateScope,
   [WS_METHODS.scmStage]: AuthOrchestrationOperateScope,
   [WS_METHODS.scmCommit]: AuthOrchestrationOperateScope,

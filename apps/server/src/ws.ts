@@ -3310,6 +3310,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.scmTimeline, sourceControlPanel.timeline(input), {
             "rpc.aggregate": "scm",
           }),
+        [WS_METHODS.scmShow]: (input) =>
+          observeRpcEffect(WS_METHODS.scmShow, sourceControlPanel.show(input), {
+            "rpc.aggregate": "scm",
+          }),
         [WS_METHODS.scmPatch]: (input) =>
           observeRpcEffect(WS_METHODS.scmPatch, sourceControlPanel.patch(input), {
             "rpc.aggregate": "scm",
