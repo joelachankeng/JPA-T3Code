@@ -92,8 +92,50 @@ export function directoryName(path: string): string {
 
 /** A row in the changes list, in either the list or the tree presentation. */
 export type ScmTreeRow =
-  | { kind: "directory"; id: string; path: string; label: string; depth: number; fileCount: number }
+  | {
+      kind: "directory";
+      id: string;
+      path: string;
+      label: string;
+      depth: number;
+      fileCount: number;
+      /** Every change below this folder, which its stage and discard act on. */
+      entries: readonly ScmFileEntry[];
+    }
   | { kind: "file"; id: string; entry: ScmFileEntry; label: string; depth: number };
+
+/** The state a row is showing: the unstaged side when there is one, else the staged side. */
+function rowState(entry: Pick<ScmFileEntry, "index" | "worktree">) {
+  return entry.worktree === "unmodified" ? entry.index : entry.worktree;
+}
+
+/**
+ * Whether the file is still on disk to open. A deletion, staged or not, leaves
+ * nothing at that path, so "Open File" on it could only fail.
+ */
+export function canOpenFile(entry: Pick<ScmFileEntry, "index" | "worktree">): boolean {
+  return rowState(entry) !== "deleted";
+}
+
+/**
+ * Colour of the dot a folder carries in place of a status letter. VS Code
+ * gives a folder the colour of the most notable change inside it: a conflict
+ * above an edit, an edit above a new file, a new file above a deletion.
+ */
+export function folderToneClassName(
+  entries: readonly Pick<ScmFileEntry, "index" | "worktree">[],
+): string | null {
+  const states = new Set(entries.map(rowState));
+  if (states.has("conflicted")) return "bg-warning";
+  if (states.has("modified") || states.has("renamed") || states.has("type-changed")) {
+    return "bg-info";
+  }
+  if (states.has("added") || states.has("untracked") || states.has("copied")) {
+    return "bg-success";
+  }
+  if (states.has("deleted")) return "bg-destructive";
+  return null;
+}
 
 /** VS Code's "View as List": one row per file, the folder shown as dimmed context. */
 export function buildListRows(entries: readonly ScmFileEntry[]): ScmTreeRow[] {
@@ -137,9 +179,10 @@ export function buildTreeRows(
     node.files.push(entry);
   }
 
-  const countFiles = (node: Node): number =>
-    node.files.length +
-    [...node.children.values()].reduce((total, child) => total + countFiles(child), 0);
+  const collectFiles = (node: Node): ScmFileEntry[] => [
+    ...node.files,
+    ...[...node.children.values()].flatMap(collectFiles),
+  ];
 
   const rows: ScmTreeRow[] = [];
   const walk = (node: Node, prefix: string, depth: number) => {
@@ -157,13 +200,15 @@ export function buildTreeRows(
         path = `${path}/${only.segment}`;
         compacted = only;
       }
+      const below = collectFiles(compacted);
       rows.push({
         kind: "directory",
         id: path,
         path,
         label,
         depth,
-        fileCount: countFiles(compacted),
+        fileCount: below.length,
+        entries: below,
       });
       if (collapsedPaths.has(path)) continue;
       walk(compacted, path, depth + 1);

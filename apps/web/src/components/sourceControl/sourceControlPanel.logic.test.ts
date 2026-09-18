@@ -5,8 +5,10 @@ import {
   buildGraphRows,
   buildListRows,
   buildTreeRows,
+  canOpenFile,
   commitButtonLabel,
   commitDisabledReason,
+  folderToneClassName,
   formatScmRelativeTime,
   graphWidth,
   statusLetter,
@@ -247,5 +249,63 @@ describe("syncLabel", () => {
     expect(syncLabel({ ahead: 2, behind: 3, upstream: "origin/main", branch: "main" })).toBe(
       "Sync Changes — 3 to pull, 2 to push",
     );
+  });
+});
+
+describe("canOpenFile", () => {
+  it("offers a file that is still on disk", () => {
+    expect(canOpenFile({ index: "unmodified", worktree: "modified" })).toBe(true);
+    expect(canOpenFile({ index: "unmodified", worktree: "untracked" })).toBe(true);
+    expect(canOpenFile({ index: "added", worktree: "unmodified" })).toBe(true);
+  });
+
+  it("does not offer a deleted file, staged or not", () => {
+    expect(canOpenFile({ index: "unmodified", worktree: "deleted" })).toBe(false);
+    expect(canOpenFile({ index: "deleted", worktree: "unmodified" })).toBe(false);
+  });
+});
+
+describe("buildTreeRows folder entries", () => {
+  it("gives a folder every change beneath it, so its actions reach nested files", () => {
+    const rows = buildTreeRows(
+      [entry("docs/a.md"), entry("docs/deep/b.md"), entry("other.md")],
+      new Set(),
+    );
+    const docs = rows.find((row) => row.kind === "directory" && row.path === "docs");
+    expect(docs?.kind === "directory" ? docs.entries.map((item) => item.path) : []).toEqual([
+      "docs/a.md",
+      "docs/deep/b.md",
+    ]);
+  });
+
+  it("keeps a collapsed folder's entries, since staging it must still reach them", () => {
+    const rows = buildTreeRows([entry("docs/a.md"), entry("docs/b.md")], new Set(["docs"]));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.kind === "directory" ? rows[0].entries : []).toHaveLength(2);
+  });
+});
+
+describe("folderToneClassName", () => {
+  const tone = (...states: Array<[ScmFileEntry["index"], ScmFileEntry["worktree"]]>) =>
+    folderToneClassName(states.map(([index, worktree]) => ({ index, worktree })));
+
+  it("takes the colour of an edit over a new file, as VS Code does", () => {
+    expect(tone(["unmodified", "modified"], ["unmodified", "untracked"])).toBe("bg-info");
+  });
+
+  it("takes the colour of a new file over a deletion", () => {
+    expect(tone(["unmodified", "deleted"], ["unmodified", "untracked"])).toBe("bg-success");
+  });
+
+  it("lets a conflict outrank everything", () => {
+    expect(tone(["conflicted", "conflicted"], ["unmodified", "modified"])).toBe("bg-warning");
+  });
+
+  it("marks a folder that only lost files", () => {
+    expect(tone(["unmodified", "deleted"])).toBe("bg-destructive");
+  });
+
+  it("reads the staged side for a staged folder", () => {
+    expect(tone(["added", "unmodified"])).toBe("bg-success");
   });
 });

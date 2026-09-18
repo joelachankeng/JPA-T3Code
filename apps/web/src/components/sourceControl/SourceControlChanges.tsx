@@ -32,9 +32,11 @@ import { useTheme } from "~/hooks/useTheme";
 import {
   buildListRows,
   buildTreeRows,
+  canOpenFile,
   commitButtonLabel,
   commitDisabledReason,
   directoryName,
+  folderToneClassName,
   statusLetter,
   statusTitle,
   statusToneClassName,
@@ -121,6 +123,8 @@ const FileRow = memo(function FileRow(props: {
   const showContextMenu = useScmContextMenu();
   const directory = props.showDirectory ? directoryName(props.entry.path) : "";
   const staged = props.group === "staged";
+  // A deleted file has nothing on disk to open, so it is not offered.
+  const openable = canOpenFile(props.entry);
 
   // The same entries VS Code puts on a changed file, through the shared host
   // menu so the desktop app gets a native one and the browser its fallback.
@@ -129,7 +133,7 @@ const FileRow = memo(function FileRow(props: {
     void showContextMenu(
       [
         { id: "open-changes", label: "Open Changes" },
-        { id: "open-file", label: "Open File" },
+        ...(openable ? ([{ id: "open-file", label: "Open File" }] as const) : []),
         { id: "open-timeline", label: "Open Timeline", icon: "clock", separatorBefore: true },
         ...(props.group === "merge"
           ? ([
@@ -207,11 +211,13 @@ const FileRow = memo(function FileRow(props: {
       ) : (
         <span className="min-w-0 flex-1" />
       )}
-      {/* Hover actions replace the status letter, exactly as VS Code does. */}
+      {/* Hover actions appear beside the status letter, which stays, as in VS Code. */}
       <span className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex">
-        <ToolbarButton label="Open File" onClick={props.onOpenFile}>
-          <FileDiff className="size-3.5" />
-        </ToolbarButton>
+        {openable ? (
+          <ToolbarButton label="Open File" onClick={props.onOpenFile}>
+            <FileDiff className="size-3.5" />
+          </ToolbarButton>
+        ) : null}
         {props.group !== "staged" ? (
           <ToolbarButton label="Discard Changes" onClick={props.onDiscard}>
             <Undo2 className="size-3.5" />
@@ -229,7 +235,7 @@ const FileRow = memo(function FileRow(props: {
           render={
             <span
               className={cn(
-                "w-3 shrink-0 text-center font-medium text-[11px] group-hover/row:hidden",
+                "w-3 shrink-0 text-center font-medium text-[11px]",
                 statusToneClassName(props.entry),
               )}
             />
@@ -242,6 +248,105 @@ const FileRow = memo(function FileRow(props: {
     </div>
   );
 });
+
+/**
+ * A folder in the tree presentation. It acts on every change beneath it, with
+ * the actions VS Code gives a folder in that group: discard and stage in
+ * Changes, unstage in Staged Changes, stage in Merge Changes. In place of a
+ * status letter it carries a dot coloured by the most notable change inside.
+ */
+function DirectoryRow(props: {
+  readonly label: string;
+  readonly depth: number;
+  readonly group: ScmGroupId;
+  readonly entries: readonly ScmFileEntry[];
+  readonly collapsed: boolean;
+  readonly onToggle: () => void;
+  readonly onStage: () => void;
+  readonly onUnstage: () => void;
+  readonly onDiscard: () => void;
+}) {
+  const showContextMenu = useScmContextMenu();
+  const tone = folderToneClassName(props.entries);
+  const staged = props.group === "staged";
+
+  const openMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    void showContextMenu(
+      staged
+        ? [{ id: "unstage", label: "Unstage Changes" }]
+        : props.group === "merge"
+          ? [{ id: "stage", label: "Stage Changes" }]
+          : [
+              { id: "discard", label: "Discard Changes" },
+              { id: "stage", label: "Stage Changes" },
+            ],
+      { x: event.clientX, y: event.clientY },
+    ).then((clicked) => {
+      if (clicked === "stage") props.onStage();
+      else if (clicked === "unstage") props.onUnstage();
+      else if (clicked === "discard") props.onDiscard();
+    });
+  };
+
+  return (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-expanded={!props.collapsed}
+      className="group/row flex h-6 w-full cursor-pointer items-center gap-1 rounded-sm pr-1 text-left hover:bg-accent/60"
+      style={{ paddingLeft: `${4 + props.depth * 12}px` }}
+      onClick={props.onToggle}
+      onContextMenu={openMenu}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        props.onToggle();
+      }}
+    >
+      {props.collapsed ? (
+        <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
+      ) : (
+        <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+      )}
+      <span className="min-w-0 flex-1 truncate text-foreground/80 text-xs">{props.label}</span>
+      <span className="hidden shrink-0 items-center gap-0.5 group-hover/row:flex">
+        {props.group === "changes" ? (
+          <ToolbarButton label="Discard Changes" onClick={props.onDiscard}>
+            <Undo2 className="size-3.5" />
+          </ToolbarButton>
+        ) : null}
+        {staged ? (
+          <ToolbarButton label="Unstage Changes" onClick={props.onUnstage}>
+            <Minus className="size-3.5" />
+          </ToolbarButton>
+        ) : (
+          <ToolbarButton label="Stage Changes" onClick={props.onStage}>
+            <Plus className="size-3.5" />
+          </ToolbarButton>
+        )}
+      </span>
+      <span className="flex w-3 shrink-0 items-center justify-center">
+        {tone ? <span aria-hidden="true" className={cn("size-1.5 rounded-full", tone)} /> : null}
+      </span>
+    </div>
+  );
+}
+
+/**
+ * The paths an unstage has to name. A staged rename is two index entries — the
+ * new path added and the old one removed — so restoring only the new path
+ * would leave the old one's deletion staged.
+ */
+function unstagePaths(entries: readonly ScmFileEntry[]): string[] {
+  return [
+    ...new Set(
+      entries.flatMap((entry) =>
+        entry.previousPath ? [entry.path, entry.previousPath] : [entry.path],
+      ),
+    ),
+  ];
+}
 
 function ChangeGroup(props: {
   readonly id: ScmGroupId;
@@ -303,7 +408,7 @@ function ChangeGroup(props: {
           {staged ? (
             <ToolbarButton
               label="Unstage All Changes"
-              onClick={() => props.changes.onUnstage(paths)}
+              onClick={() => props.changes.onUnstage(unstagePaths(props.entries))}
             >
               <Minus className="size-3.5" />
             </ToolbarButton>
@@ -325,12 +430,14 @@ function ChangeGroup(props: {
         <div className="min-w-0">
           {rows.map((row) =>
             row.kind === "directory" ? (
-              <button
+              <DirectoryRow
                 key={`dir:${row.id}`}
-                type="button"
-                className="flex h-6 w-full cursor-pointer items-center gap-1 rounded-sm pr-1 text-left hover:bg-accent/60"
-                style={{ paddingLeft: `${4 + row.depth * 12}px` }}
-                onClick={() =>
+                label={row.label}
+                depth={row.depth}
+                group={props.id}
+                entries={row.entries}
+                collapsed={collapsedDirectories.has(row.path)}
+                onToggle={() =>
                   setCollapsedDirectories((current) => {
                     const next = new Set(current);
                     if (next.has(row.path)) next.delete(row.path);
@@ -338,14 +445,15 @@ function ChangeGroup(props: {
                     return next;
                   })
                 }
-              >
-                {collapsedDirectories.has(row.path) ? (
-                  <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                )}
-                <span className="truncate text-foreground/80 text-xs">{row.label}</span>
-              </button>
+                onStage={() =>
+                  props.changes.onStage(
+                    props.id,
+                    row.entries.map((entry) => entry.path),
+                  )
+                }
+                onUnstage={() => props.changes.onUnstage(unstagePaths(row.entries))}
+                onDiscard={() => props.changes.onDiscard(row.entries)}
+              />
             ) : (
               <FileRow
                 key={`file:${props.id}:${row.entry.path}`}
@@ -359,7 +467,7 @@ function ChangeGroup(props: {
                 onOpenTimeline={() => props.changes.onOpenTimeline(row.entry.path)}
                 onPrimaryAction={() =>
                   staged
-                    ? props.changes.onUnstage([row.entry.path])
+                    ? props.changes.onUnstage(unstagePaths([row.entry]))
                     : props.changes.onStage(props.id, [row.entry.path])
                 }
                 onDiscard={() => props.changes.onDiscard([row.entry])}
