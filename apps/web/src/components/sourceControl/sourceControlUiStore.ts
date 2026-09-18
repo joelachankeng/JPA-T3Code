@@ -28,6 +28,15 @@ export interface ScmRepositoryUiState {
    * looked at a diff first is worse than losing a toggle.
    */
   readonly message: string;
+  /**
+   * A folder or file the GitLens history view is pinned to, as "Open Folder
+   * History" does. Null follows whichever file is open beside the panel.
+   */
+  readonly historyPath: string | null;
+  /** Whether the pinned path is a folder, which the view is then titled after. */
+  readonly historyIsFolder: boolean;
+  /** Restricts the commit graph to commits touching this path, or null for all. */
+  readonly graphPath: string | null;
 }
 
 export const DEFAULT_SCM_UI_STATE: ScmRepositoryUiState = {
@@ -38,6 +47,9 @@ export const DEFAULT_SCM_UI_STATE: ScmRepositoryUiState = {
   gitLensView: "commits",
   allBranches: false,
   message: "",
+  historyPath: null,
+  historyIsFolder: false,
+  graphPath: null,
 };
 
 interface ScmUiStoreState {
@@ -84,9 +96,16 @@ export const useSourceControlUiStore = create<ScmUiStoreState>()(
   ),
 );
 
+/**
+ * The entry for a repository with defaults filled in. This builds a new object,
+ * so it must not be used as a store selector directly; select the raw entry and
+ * call this outside the subscription.
+ */
 export function selectScmUiState(
   byRepository: Record<string, ScmRepositoryUiState>,
   key: string,
 ): ScmRepositoryUiState {
-  return byRepository[key] ?? DEFAULT_SCM_UI_STATE;
+  const stored = byRepository[key];
+  // An entry saved before a field existed reads that field as its default.
+  return stored ? { ...DEFAULT_SCM_UI_STATE, ...stored } : DEFAULT_SCM_UI_STATE;
 }

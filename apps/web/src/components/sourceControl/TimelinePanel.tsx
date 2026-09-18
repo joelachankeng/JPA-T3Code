@@ -9,7 +9,14 @@
  */
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import type { EnvironmentId, ScmDiffInput } from "@t3tools/contracts";
-import { ArrowLeft, GitCommitHorizontal, RefreshCw, FileClock } from "lucide-react";
+import {
+  ArrowLeft,
+  ChartScatter,
+  GitCommitHorizontal,
+  List as ListIcon,
+  RefreshCw,
+  FileClock,
+} from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
@@ -28,6 +35,7 @@ import {
   statusTitle,
 } from "./sourceControlPanel.logic";
 import { useScmContextMenu } from "./useScmContextMenu";
+import { VisualHistoryChart } from "./VisualHistoryChart";
 import { useDelayedFlag, useScmAutoRefresh } from "./useScmAutoRefresh";
 import { useScmDiff, useScmTimeline, type ScmTarget } from "./useSourceControl";
 
@@ -38,6 +46,9 @@ export interface TimelinePanelProps {
   readonly cwd: string;
   readonly relativePath: string;
   readonly onOpenFile: (path: string) => void;
+  /** The commit list, or the same commits charted over time. */
+  readonly view: "list" | "visual";
+  readonly onViewChange: (view: "list" | "visual") => void;
 }
 
 /** Which revision of the file the inline diff is showing, if any. */
@@ -170,6 +181,28 @@ export function TimelinePanel(props: TimelinePanelProps) {
           </TooltipTrigger>
           <TooltipPopup>{showRefreshing ? "Refreshing…" : "Refresh"}</TooltipPopup>
         </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost-muted"
+                size="icon-xs"
+                aria-label={props.view === "visual" ? "Show as List" : "Show Visual History"}
+                onClick={() => props.onViewChange(props.view === "visual" ? "list" : "visual")}
+              />
+            }
+          >
+            {props.view === "visual" ? (
+              <ListIcon className="size-3.5" />
+            ) : (
+              <ChartScatter className="size-3.5" />
+            )}
+          </TooltipTrigger>
+          <TooltipPopup>
+            {props.view === "visual" ? "Show as List" : "Show Visual History"}
+          </TooltipPopup>
+        </Tooltip>
       </header>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -180,6 +213,18 @@ export function TimelinePanel(props: TimelinePanelProps) {
             <p className="px-3 py-3 text-muted-foreground text-xs">
               This file is not tracked by git, so it has no history yet.
             </p>
+          ) : props.view === "visual" ? (
+            <VisualHistoryChart
+              entries={entries}
+              onSelect={(entry) =>
+                setSelection({
+                  kind: "commit",
+                  path: entry.pathAtCommit,
+                  sha: entry.sha,
+                  subject: entry.subject,
+                })
+              }
+            />
           ) : (
             <>
               {timeline.data?.hasUncommittedChanges ? (

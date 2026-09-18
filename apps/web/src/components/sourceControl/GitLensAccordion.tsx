@@ -23,6 +23,7 @@ import {
   GitBranch,
   GitCommitHorizontal,
   Inbox,
+  PinOff,
   RefreshCw,
   Tag,
   TreePalm,
@@ -240,13 +241,20 @@ export interface GitLensAccordionProps {
   readonly viewError: string | null;
   readonly fileHistory: ScmTimelineResult | null;
   readonly fileHistoryPath: string | null;
+  /** A folder's history is titled as one, as GitLens does. */
+  readonly fileHistoryIsFolder: boolean;
+  /** Pinned by "Open Folder History"; otherwise it follows the open file. */
+  readonly fileHistoryPinned: boolean;
+  readonly onUnpinHistory: () => void;
+  /** Open the path's uncommitted changes, the row GitLens lists first. */
+  readonly onOpenUncommitted: (path: string) => void;
   readonly onRefresh: () => void;
   readonly onSelectCommit: (commit: ScmCommit) => void;
   readonly onCheckoutBranch: (name: string) => void;
   readonly onApplyStash: (ref: string) => void;
   readonly onDropStash: (ref: string) => void;
   readonly onRemoteAction: (action: "fetch" | "pull" | "push") => void;
-  readonly onOpenTimelineEntry: (path: string, sha: string) => void;
+  readonly onOpenTimelineEntry: (path: string, sha: string, subject: string) => void;
 }
 
 export function GitLensAccordion(props: GitLensAccordionProps) {
@@ -260,7 +268,9 @@ export function GitLensAccordion(props: GitLensAccordionProps) {
     <div className="flex min-w-0 flex-col">
       <div className="flex items-center gap-0.5 px-2 pb-1">
         <span className="shrink-0 pr-1 font-medium text-[11px] text-muted-foreground uppercase tracking-wide">
-          {active.label}
+          {active.id === "file-history" && props.fileHistoryIsFolder
+            ? "Folder History"
+            : active.label}
         </span>
         {props.status.repository.branch ? (
           <span className="min-w-0 shrink truncate text-[11px] text-muted-foreground">
@@ -389,11 +399,43 @@ export function GitLensAccordion(props: GitLensAccordionProps) {
             </p>
           ) : (
             <>
-              <Row
-                icon={<FileClock className="size-3.5 text-muted-foreground" />}
-                title={props.fileHistoryPath}
-                muted
-              />
+              <div className="flex h-6 items-center gap-1.5 pr-1 pl-2">
+                <FileClock className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 shrink truncate text-muted-foreground text-xs">
+                  {props.fileHistoryPath}
+                </span>
+                {props.fileHistoryPinned ? (
+                  <>
+                    <span className="shrink-0 text-[11px] text-muted-foreground">(pinned)</span>
+                    <span className="min-w-0 flex-1" />
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost-muted"
+                            size="icon-xs"
+                            aria-label="Unpin, follow the open file again"
+                            onClick={props.onUnpinHistory}
+                          />
+                        }
+                      >
+                        <PinOff className="size-3.5" />
+                      </TooltipTrigger>
+                      <TooltipPopup>Unpin, follow the open file again</TooltipPopup>
+                    </Tooltip>
+                  </>
+                ) : null}
+              </div>
+              {props.fileHistory?.hasUncommittedChanges ? (
+                <Row
+                  indent={1}
+                  icon={<GitCommitHorizontal className="size-3.5 text-warning" />}
+                  title="Uncommitted changes"
+                  trailing="now"
+                  onClick={() => props.onOpenUncommitted(props.fileHistoryPath ?? "")}
+                />
+              ) : null}
               {(props.fileHistory?.entries ?? []).map((entry) => (
                 <Row
                   key={entry.sha}
@@ -402,12 +444,16 @@ export function GitLensAccordion(props: GitLensAccordionProps) {
                   title={entry.subject || "(no message)"}
                   detail={entry.authorName}
                   trailing={formatScmRelativeTime(entry.authorDate)}
-                  onClick={() => props.onOpenTimelineEntry(props.fileHistoryPath ?? "", entry.sha)}
+                  onClick={() =>
+                    props.onOpenTimelineEntry(props.fileHistoryPath ?? "", entry.sha, entry.subject)
+                  }
                 />
               ))}
               {props.fileHistory && props.fileHistory.entries.length === 0 ? (
                 <p className="px-3 py-3 text-muted-foreground text-xs">
-                  No commits touch this file yet.
+                  {props.fileHistoryIsFolder
+                    ? "No commits touch this folder yet."
+                    : "No commits touch this file yet."}
                 </p>
               ) : null}
             </>

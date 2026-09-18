@@ -25,8 +25,11 @@ import {
   type ScmDiffResult,
   type ScmDiffSide,
   type ScmFileEntry,
+  type ScmIgnoreInput,
   type ScmLogInput,
   type ScmLogResult,
+  type ScmPatchInput,
+  type ScmPatchResult,
   type ScmRemoteActionInput,
   type ScmRemoteActionResult,
   type ScmStageInput,
@@ -83,6 +86,8 @@ export class SourceControlPanelService extends Context.Service<
     readonly view: (input: ScmViewInput) => Effect.Effect<ScmViewResult, VcsError>;
     readonly diff: (input: ScmDiffInput) => Effect.Effect<ScmDiffResult, VcsError>;
     readonly timeline: (input: ScmTimelineInput) => Effect.Effect<ScmTimelineResult, VcsError>;
+    readonly ignore: (input: ScmIgnoreInput) => Effect.Effect<void, VcsError | GitCommandError>;
+    readonly patch: (input: ScmPatchInput) => Effect.Effect<ScmPatchResult, VcsError>;
   }
 >()("t3/sourceControl/SourceControlPanelService") {}
 
@@ -645,6 +650,10 @@ export const make = Effect.gen(function* () {
       ...(input.author ? [`--author=${input.author}`] : []),
       ...(input.search ? [`--grep=${input.search}`, "--regexp-ignore-case"] : []),
       ...(input.follow && input.path ? ["--follow"] : []),
+      // A path-limited log reports each commit's real parents, which are mostly
+      // commits the filter dropped, so the graph could never join them up.
+      // Parent rewriting points each one at the nearest commit that is listed.
+      ...(input.path ? ["--parents"] : []),
       ...(input.ref ? [input.ref] : []),
       ...(input.path ? ["--", topPath(input.path)] : []),
     ];
@@ -1084,6 +1093,9 @@ export const make = Effect.gen(function* () {
   const diff: SourceControlPanelService["Service"]["diff"] = Effect.fn("Scm.diff")(
     function* (input) {
       const filePath = input.path;
+      // A folder has no single file to read, and a caller that only renders
+      // the patch has no use for either side's full text.
+      const wantContents = filePath !== undefined && input.includeContents !== false;
       const [patchResult, oldSide, newSide] = yield* Effect.all(
         [
           run("Scm.diff", input.cwd, diffArgs(input), {
@@ -1091,14 +1103,12 @@ export const make = Effect.gen(function* () {
             maxOutputBytes: DIFF_MAX_OUTPUT_BYTES,
             timeoutMs: 30_000,
           }),
-          // Whole-file contents only make sense for a single file; a
-          // whole-commit diff carries its patch and nothing else.
-          filePath === undefined
-            ? Effect.succeed({ text: "", binary: false })
-            : contentsAt(input.cwd, input.from, input.previousPath ?? filePath),
-          filePath === undefined
-            ? Effect.succeed({ text: "", binary: false })
-            : contentsAt(input.cwd, input.to, filePath),
+          wantContents
+            ? contentsAt(input.cwd, input.from, input.previousPath ?? filePath)
+            : Effect.succeed({ text: "", binary: false }),
+          wantContents
+            ? contentsAt(input.cwd, input.to, filePath)
+            : Effect.succeed({ text: "", binary: false }),
         ],
         { concurrency: 3 },
       );
@@ -1196,9 +1206,12 @@ export const make = Effect.gen(function* () {
       const entries: ScmTimelineEntry[] = commits.slice(0, limit).map((commit) => {
         const changes = parseNameStatusZ(statusBlocks.get(commit.sha) ?? "");
         const counts = parseNumstatZ(numstatBlocks.get(commit.sha) ?? "");
-        // With --follow there is exactly one change per commit, the file itself.
-        const change = changes[0];
-        const count = counts[0];
+        // A file's history has one change per commit. A folder's can have
+        // several, so the row sums them and reads as a modification unless
+        // every file in it changed the same way.
+        const single = changes.length === 1 ? changes[0] : undefined;
+        const states = new Set(changes.map((change) => change.state));
+        const [onlyState] = states;
         return {
           sha: commit.sha,
           shortSha: commit.shortSha,
@@ -1207,10 +1220,10 @@ export const make = Effect.gen(function* () {
           authorName: commit.authorName,
           authorEmail: commit.authorEmail,
           authorDate: commit.authorDate,
-          state: change?.state ?? "modified",
-          pathAtCommit: change?.path ?? repoPath,
-          insertions: count?.insertions ?? 0,
-          deletions: count?.deletions ?? 0,
+          state: states.size === 1 && onlyState !== undefined ? onlyState : "modified",
+          pathAtCommit: single?.path ?? repoPath,
+          insertions: counts.reduce((total, count) => total + count.insertions, 0),
+          deletions: counts.reduce((total, count) => total + count.deletions, 0),
         };
       });
 
@@ -1226,6 +1239,98 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  /**
+   * Append paths to the repository's root `.gitignore`, one per line, keeping
+   * the file's own line endings and skipping any line already present.
+   */
+  const ignore: SourceControlPanelService["Service"]["ignore"] = Effect.fn("Scm.ignore")(
+    function* (input) {
+      const root = yield* repositoryRoot(input.cwd);
+      if (!root) {
+        return yield* new GitCommandError({
+          operation: "Scm.ignore",
+          command: "git",
+          cwd: input.cwd,
+          detail: "Not a git repository.",
+        });
+      }
+      const file = path.join(root, ".gitignore");
+      const existing = yield* fileSystem.readFileString(file).pipe(Effect.orElseSucceed(() => ""));
+      const eol = existing.includes("\r\n") ? "\r\n" : "\n";
+      const present = new Set(existing.split(/\r?\n/).map((line) => line.trim()));
+      const additions = [...new Set(input.paths)].filter((value) => !present.has(value));
+      if (additions.length === 0) return;
+      const separator = existing.length > 0 && !existing.endsWith("\n") ? eol : "";
+      yield* fileSystem
+        .writeFileString(file, `${existing}${separator}${additions.join(eol)}${eol}`)
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new GitCommandError({
+                operation: "Scm.ignore",
+                command: "git",
+                cwd: input.cwd,
+                detail: `Could not write .gitignore: ${cause.message}`,
+              }),
+          ),
+        );
+    },
+  );
+
+  /**
+   * A patch for the given paths. Tracked changes come from `git diff`; an
+   * untracked file is not in the index, so it is rendered against /dev/null
+   * the way `git add -N` would show it, which is what VS Code copies too.
+   */
+  const patch: SourceControlPanelService["Service"]["patch"] = Effect.fn("Scm.patch")(
+    function* (input) {
+      const root = (yield* repositoryRoot(input.cwd)) ?? input.cwd;
+      const prefixArgs = ["--no-color", "--src-prefix=a/", "--dst-prefix=b/"];
+      const pathspecs = topPaths(input.paths);
+      if (input.staged) {
+        const staged = yield* softStdout("Scm.patch.staged", root, [
+          "diff",
+          "--cached",
+          ...prefixArgs,
+          "--",
+          ...pathspecs,
+        ]);
+        return { patch: staged } satisfies ScmPatchResult;
+      }
+      const [tracked, untrackedList] = yield* Effect.all(
+        [
+          softStdout("Scm.patch.tracked", root, ["diff", ...prefixArgs, "--", ...pathspecs]),
+          softStdout("Scm.patch.untracked", root, [
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            ...pathspecs,
+          ]),
+        ],
+        { concurrency: 2 },
+      );
+      const untracked = untrackedList.split("\0").filter((value) => value.length > 0);
+      const untrackedPatches = yield* Effect.forEach(
+        untracked,
+        (file) =>
+          // --no-index compares two paths on disk and exits 1 when they differ,
+          // which is the expected outcome here.
+          run(
+            "Scm.patch.untrackedFile",
+            root,
+            ["diff", ...prefixArgs, "--no-index", "--", "/dev/null", file],
+            { allowNonZeroExit: true },
+          ).pipe(Effect.map((result) => result.stdout)),
+        { concurrency: 4 },
+      );
+      return {
+        patch: [tracked, ...untrackedPatches].filter((part) => part.length > 0).join(""),
+      } satisfies ScmPatchResult;
+    },
+  );
+
   return SourceControlPanelService.of({
     status,
     stage,
@@ -1238,6 +1343,8 @@ export const make = Effect.gen(function* () {
     view,
     diff,
     timeline,
+    ignore,
+    patch,
   });
 });
 

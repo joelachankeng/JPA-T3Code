@@ -94,5 +94,17 @@ export function createSourceControlPanelAtoms<R, E>(
       scheduler: vcsCommandScheduler,
       concurrency: perRepository,
     }),
+    ignore: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:scm:ignore",
+      tag: WS_METHODS.scmIgnore,
+      scheduler: vcsCommandScheduler,
+      concurrency: perRepository,
+    }),
+    // A patch is read on demand, when the user asks to copy one, so it is a
+    // one-shot command rather than a cached query nobody subscribes to.
+    patch: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:scm:patch",
+      tag: WS_METHODS.scmPatch,
+    }),
   };
 }

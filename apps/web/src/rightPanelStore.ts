@@ -99,6 +99,8 @@ export type RightPanelSurface =
       kind: "timeline";
       /** Workspace-relative, matching the file surface's own path convention. */
       relativePath: string;
+      /** A list of commits, or the visual history chart. Absent reads as the list. */
+      view?: "list" | "visual";
     };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
@@ -150,7 +152,7 @@ interface RightPanelStoreState {
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
-  openTimeline: (ref: ScopedThreadRef, relativePath: string) => void;
+  openTimeline: (ref: ScopedThreadRef, relativePath: string, view?: "list" | "visual") => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -231,10 +233,14 @@ const fileSurface = (
   revealRequestId,
 });
 
-const timelineSurface = (relativePath: string): RightPanelSurface => ({
+const timelineSurface = (
+  relativePath: string,
+  view: "list" | "visual" = "list",
+): RightPanelSurface => ({
   id: `timeline:${relativePath}`,
   kind: "timeline",
   relativePath,
+  view,
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -638,14 +644,28 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
-      openTimeline: (ref, requestedPath) =>
+      openTimeline: (ref, requestedPath, view) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
             const relativePath = requestedPath.replace(/\/+$/, "") || requestedPath;
+            const surfaceId = `timeline:${relativePath}`;
+            const existing = current.surfaces.find((surface) => surface.id === surfaceId);
+            // Reopening keeps the tab's current mode unless a mode was asked for.
+            const resolvedView =
+              view ?? (existing?.kind === "timeline" ? existing.view : undefined) ?? "list";
+            const surface = timelineSurface(relativePath, resolvedView);
             // Unlike opening a file, a timeline does not replace the Files
             // surface: it answers a question about a file the user is still
             // browsing, so the explorer stays where it was.
-            return upsertSurface(current, timelineSurface(relativePath));
+            if (!existing) return upsertSurface(current, surface);
+            return {
+              ...current,
+              isOpen: true,
+              activeSurfaceId: surface.id,
+              surfaces: current.surfaces.map((entry) =>
+                entry.id === surface.id ? surface : entry,
+              ),
+            };
           }),
         ),
       openAttachment: (ref, attachment) =>

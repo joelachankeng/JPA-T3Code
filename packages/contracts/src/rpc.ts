@@ -31,8 +31,11 @@ import {
   ScmCommitResult,
   ScmDiffInput,
   ScmDiffResult,
+  ScmIgnoreInput,
   ScmLogInput,
   ScmLogResult,
+  ScmPatchInput,
+  ScmPatchResult,
   ScmRemoteActionInput,
   ScmRemoteActionResult,
   ScmStageInput,
@@ -353,6 +356,8 @@ export const WS_METHODS = {
   scmView: "scm.view",
   scmDiff: "scm.diff",
   scmTimeline: "scm.timeline",
+  scmIgnore: "scm.ignore",
+  scmPatch: "scm.patch",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -1137,6 +1142,17 @@ const WsScmTimelineRpc = Rpc.make(WS_METHODS.scmTimeline, {
   error: ScmError,
 });
 
+const WsScmIgnoreRpc = Rpc.make(WS_METHODS.scmIgnore, {
+  payload: ScmIgnoreInput,
+  error: ScmError,
+});
+
+const WsScmPatchRpc = Rpc.make(WS_METHODS.scmPatch, {
+  payload: ScmPatchInput,
+  success: ScmPatchResult,
+  error: ScmError,
+});
+
 const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   payload: VcsListRefsInput,
   success: VcsListRefsResult,
@@ -1575,6 +1591,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsScmViewRpc,
   WsScmDiffRpc,
   WsScmTimelineRpc,
+  WsScmIgnoreRpc,
+  WsScmPatchRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,

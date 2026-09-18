@@ -4691,9 +4691,9 @@ export default function ChatView(props: ChatViewProps) {
     [activeProject, activeThreadRef],
   );
   const openTimelineSurface = useCallback(
-    (relativePath: string) => {
+    (relativePath: string, view?: "list" | "visual") => {
       if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openTimeline(activeThreadRef, relativePath);
+      useRightPanelStore.getState().openTimeline(activeThreadRef, relativePath, view);
     },
     [activeProject, activeThreadRef],
   );
@@ -9730,6 +9730,8 @@ export default function ChatView(props: ChatViewProps) {
           cwd={activeWorkspaceRoot}
           relativePath={renderedRightPanelSurface.relativePath}
           onOpenFile={openFileSurface}
+          view={renderedRightPanelSurface.view ?? "list"}
+          onViewChange={(view) => openTimelineSurface(renderedRightPanelSurface.relativePath, view)}
         />
       </Suspense>
     ) : (renderedRightPanelSurface?.kind === "files" ||

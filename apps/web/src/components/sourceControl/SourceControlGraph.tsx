@@ -7,7 +7,7 @@
  * rather than a degenerate one.
  */
 import type { ScmCommit, ScmCommitRef, ScmLogResult } from "@t3tools/contracts";
-import { GitBranch, Cloud, Tag, RefreshCw } from "lucide-react";
+import { GitBranch, Cloud, Tag, RefreshCw, X } from "lucide-react";
 import { memo, useMemo } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -178,6 +178,9 @@ export interface SourceControlGraphProps {
   readonly onSelectCommit: (commit: ScmCommit) => void;
   readonly onLoadMore: (() => void) | null;
   readonly selectedSha: string | null;
+  /** When set, the graph shows only commits touching this path. */
+  readonly pathFilter: string | null;
+  readonly onClearPathFilter: () => void;
 }
 
 export function SourceControlGraph(props: SourceControlGraphProps) {
@@ -205,6 +208,20 @@ export function SourceControlGraph(props: SourceControlGraphProps) {
             <MenuItem onClick={() => props.onAllBranchesChange(true)}>All Branches</MenuItem>
           </MenuPopup>
         </Menu>
+        {props.pathFilter ? (
+          <span className="inline-flex min-w-0 max-w-48 items-center gap-1 rounded-full bg-accent py-px pr-0.5 pl-2 text-[11px] text-foreground/85">
+            <span className="truncate">{props.pathFilter}</span>
+            <Button
+              type="button"
+              variant="ghost-muted"
+              size="icon-micro"
+              aria-label="Show every commit again"
+              onClick={props.onClearPathFilter}
+            >
+              <X className="size-3" />
+            </Button>
+          </span>
+        ) : null}
         <span className="min-w-0 flex-1" />
         <Tooltip>
           <TooltipTrigger

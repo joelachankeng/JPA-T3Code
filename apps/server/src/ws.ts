@@ -3310,6 +3310,16 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.scmTimeline, sourceControlPanel.timeline(input), {
             "rpc.aggregate": "scm",
           }),
+        [WS_METHODS.scmPatch]: (input) =>
+          observeRpcEffect(WS_METHODS.scmPatch, sourceControlPanel.patch(input), {
+            "rpc.aggregate": "scm",
+          }),
+        [WS_METHODS.scmIgnore]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scmIgnore,
+            sourceControlPanel.ignore(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "scm" },
+          ),
         // Every mutation refreshes the shared VCS status, so the branch chip and
         // the thread's own change indicators follow the panel without a reload.
         [WS_METHODS.scmStage]: (input) =>

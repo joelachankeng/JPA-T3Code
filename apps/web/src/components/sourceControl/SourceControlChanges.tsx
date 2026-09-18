@@ -63,6 +63,19 @@ export interface SourceControlChangesProps {
   readonly onOpenFile: (path: string) => void;
   readonly onOpenTimeline: (path: string) => void;
   readonly onAcceptSide: (side: "ours" | "theirs", paths: readonly string[]) => void;
+  /** The folder menu's actions, named as VS Code names them. */
+  readonly folderActions: ScmFolderActions;
+}
+
+/** What a folder's right-click menu can do, beyond staging and discarding. */
+export interface ScmFolderActions {
+  readonly addToGitignore: (paths: readonly string[]) => void;
+  readonly copyPatch: (paths: readonly string[], staged: boolean) => void;
+  readonly openChangesWithRevision: (folder: string) => void;
+  readonly openChangesWithRef: (folder: string) => void;
+  readonly openHistory: (folder: string) => void;
+  readonly openHistoryInGraph: (folder: string) => void;
+  readonly openVisualHistory: (folder: string) => void;
 }
 
 const GROUP_TITLES: Record<ScmGroupId, string> = {
@@ -150,7 +163,7 @@ const FileRow = memo(function FileRow(props: {
           : ([
               { id: "discard", label: "Discard Changes", separatorBefore: true },
               { id: "stage", label: "Stage Changes" },
-              { id: "stash", label: "Stash Changes\u2026" },
+              { id: "stash", label: "Stash Changes…" },
             ] as const)),
       ],
       { x: event.clientX, y: event.clientY },
@@ -257,6 +270,8 @@ const FileRow = memo(function FileRow(props: {
  */
 function DirectoryRow(props: {
   readonly label: string;
+  /** Repository-relative folder path, which the history and compare actions act on. */
+  readonly path: string;
   readonly depth: number;
   readonly group: ScmGroupId;
   readonly entries: readonly ScmFileEntry[];
@@ -265,27 +280,72 @@ function DirectoryRow(props: {
   readonly onStage: () => void;
   readonly onUnstage: () => void;
   readonly onDiscard: () => void;
+  readonly folderActions: ScmFolderActions;
 }) {
   const showContextMenu = useScmContextMenu();
   const tone = folderToneClassName(props.entries);
   const staged = props.group === "staged";
 
+  /**
+   * VS Code's folder menu. The first block is the group's own actions; the
+   * rest is the same in every group. Staged folders offer no .gitignore entry,
+   * since the files are already on their way into the repository.
+   */
   const openMenu = (event: React.MouseEvent) => {
     event.preventDefault();
-    void showContextMenu(
-      staged
-        ? [{ id: "unstage", label: "Unstage Changes" }]
+    const paths = props.entries.map((entry) => entry.path);
+    const leading =
+      props.group === "staged"
+        ? ([{ id: "unstage", label: "Unstage Changes" }] as const)
         : props.group === "merge"
-          ? [{ id: "stage", label: "Stage Changes" }]
-          : [
+          ? ([{ id: "stage", label: "Stage Changes" }] as const)
+          : ([
               { id: "discard", label: "Discard Changes" },
               { id: "stage", label: "Stage Changes" },
-            ],
+              { id: "gitignore", label: "Add to .gitignore" },
+            ] as const);
+    void showContextMenu(
+      [
+        ...leading,
+        {
+          id: "open-changes-with",
+          label: "Open Changes with",
+          separatorBefore: true,
+          children: [
+            { id: "compare-revision", label: "Open Folder Changes with Revision…" },
+            { id: "compare-ref", label: "Open Folder Changes with Branch or Tag…" },
+          ],
+        },
+        {
+          id: "folder-history",
+          label: "Folder History",
+          separatorBefore: true,
+          children: [
+            { id: "history", label: "Open Folder History" },
+            { id: "history-graph", label: "Open Folder History in Commit Graph" },
+            { id: "history-visual", label: "Open Visual Folder History" },
+          ],
+        },
+        { id: "copy-patch", label: "Copy Changes (Patch)", separatorBefore: true },
+      ],
       { x: event.clientX, y: event.clientY },
     ).then((clicked) => {
+      const actions = props.folderActions;
       if (clicked === "stage") props.onStage();
       else if (clicked === "unstage") props.onUnstage();
       else if (clicked === "discard") props.onDiscard();
+      else if (clicked === "gitignore") actions.addToGitignore(paths);
+      else if (clicked === "compare-revision") actions.openChangesWithRevision(props.path);
+      else if (clicked === "compare-ref") actions.openChangesWithRef(props.path);
+      else if (clicked === "history") actions.openHistory(props.path);
+      else if (clicked === "history-graph") actions.openHistoryInGraph(props.path);
+      else if (clicked === "history-visual") actions.openVisualHistory(props.path);
+      else if (clicked === "copy-patch") {
+        actions.copyPatch(
+          props.group === "staged" ? unstagePaths(props.entries) : paths,
+          props.group === "staged",
+        );
+      }
     });
   };
 
@@ -433,6 +493,7 @@ function ChangeGroup(props: {
               <DirectoryRow
                 key={`dir:${row.id}`}
                 label={row.label}
+                path={row.path}
                 depth={row.depth}
                 group={props.id}
                 entries={row.entries}
@@ -453,6 +514,7 @@ function ChangeGroup(props: {
                 }
                 onUnstage={() => props.changes.onUnstage(unstagePaths(row.entries))}
                 onDiscard={() => props.changes.onDiscard(row.entries)}
+                folderActions={props.changes.folderActions}
               />
             ) : (
               <FileRow

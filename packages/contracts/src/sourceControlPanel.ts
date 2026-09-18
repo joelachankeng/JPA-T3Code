@@ -414,6 +414,11 @@ export const ScmDiffInput = Schema.Struct({
   from: ScmDiffSide,
   to: ScmDiffSide,
   ignoreWhitespace: Schema.optional(Schema.Boolean),
+  /**
+   * Whole-file contents for both sides. Off for a folder, which has no single
+   * file to read, and for any caller that only renders the patch.
+   */
+  includeContents: Schema.optional(Schema.Boolean),
 });
 export type ScmDiffInput = typeof ScmDiffInput.Type;
 
@@ -431,6 +436,35 @@ export const ScmDiffResult = Schema.Struct({
   deletions: NonNegativeInt,
 });
 export type ScmDiffResult = typeof ScmDiffResult.Type;
+
+// RPC: folder and file actions from the context menu
+
+export const ScmIgnoreInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  /**
+   * Written one per line to the repository's root `.gitignore`. A folder is
+   * added as the files under it, which is what VS Code writes.
+   */
+  paths: Schema.Array(ScmPath),
+});
+export type ScmIgnoreInput = typeof ScmIgnoreInput.Type;
+
+export const ScmPatchInput = Schema.Struct({
+  cwd: TrimmedNonEmptyString,
+  paths: Schema.Array(ScmPath),
+  /** The index against HEAD when true, else the working tree against the index. */
+  staged: Schema.Boolean,
+});
+export type ScmPatchInput = typeof ScmPatchInput.Type;
+
+export const ScmPatchResult = Schema.Struct({
+  /**
+   * A patch `git apply` accepts. Untracked files are included as new files,
+   * which a plain `git diff` would leave out.
+   */
+  patch: Schema.String,
+});
+export type ScmPatchResult = typeof ScmPatchResult.Type;
 
 // RPC: file timeline
 

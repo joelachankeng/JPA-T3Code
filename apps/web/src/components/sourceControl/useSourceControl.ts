@@ -142,6 +142,8 @@ export function useScmCommands() {
     remoteAction: useAtomCommand(sourceControlPanel.remoteAction, { reportFailure: false }),
     stash: useAtomCommand(sourceControlPanel.stash, { reportFailure: false }),
     branch: useAtomCommand(sourceControlPanel.branch, { reportFailure: false }),
+    ignore: useAtomCommand(sourceControlPanel.ignore, { reportFailure: false }),
+    patch: useAtomCommand(sourceControlPanel.patch, { reportFailure: false }),
   };
 }
 

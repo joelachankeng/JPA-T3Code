@@ -25,7 +25,7 @@ import {
   RefreshCw,
   RotateCw,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { Button } from "~/components/ui/button";
@@ -33,13 +33,19 @@ import { ScrollArea } from "~/components/ui/scroll-area";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { requestConfirmDialog } from "~/confirmDialog";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 
 import { GitLensAccordion } from "./GitLensAccordion";
-import { SourceControlChanges, type ScmGroupId } from "./SourceControlChanges";
+import {
+  SourceControlChanges,
+  type ScmFolderActions,
+  type ScmGroupId,
+} from "./SourceControlChanges";
+import { ScmRefPickerDialog, type ScmRefPickerKind } from "./ScmRefPickerDialog";
 import { SourceControlGraph } from "./SourceControlGraph";
 import { fileName, syncLabel } from "./sourceControlPanel.logic";
 import {
@@ -76,16 +82,23 @@ const SCM_REFRESH_KEYFRAMES = `@keyframes scm-refresh {
 type DiffSelection =
   | { kind: "working"; entry: ScmFileEntry; staged: boolean }
   /** `path` null shows every file the commit touched, as the graph row does. */
-  | { kind: "commit"; path: string | null; sha: string; subject: string };
+  | { kind: "commit"; path: string | null; sha: string; subject: string }
+  /** A path in the working tree against a revision, from "Open Changes with". */
+  | { kind: "compare"; path: string; ref: string; label: string };
 
 function Section(props: {
   readonly title: string;
   readonly open: boolean;
   readonly onToggle: () => void;
   readonly children: React.ReactNode;
+  /** Names the section so the panel can scroll to it after opening it. */
+  readonly id: ScmSectionId;
 }) {
   return (
-    <section className="min-w-0 border-border/60 border-b last:border-b-0">
+    <section
+      data-scm-section={props.id}
+      className="min-w-0 border-border/60 border-b last:border-b-0"
+    >
       <button
         type="button"
         className="flex h-7 w-full cursor-pointer items-center gap-1 px-1.5 text-left hover:bg-accent/40"
@@ -111,7 +124,7 @@ export interface SourceControlPanelProps {
   /** Opens a workspace file in its own surface. */
   readonly onOpenFile: (relativePath: string) => void;
   /** Opens the file's timeline in its own surface. */
-  readonly onOpenTimeline: (relativePath: string) => void;
+  readonly onOpenTimeline: (relativePath: string, view?: "list" | "visual") => void;
   /** The file the user is looking at elsewhere, so File History has a subject. */
   readonly activeFilePath: string | null;
 }
@@ -122,7 +135,14 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
 
   // Presentation the user chose, remembered across the panel unmounting.
   const uiKey = scmUiKey({ environmentId: props.environmentId, cwd: props.cwd });
-  const ui = useSourceControlUiStore((state) => selectScmUiState(state.byRepository, uiKey));
+  // Select the stored entry itself, which keeps its identity between reads,
+  // and fill in defaults outside the selector. A selector that built a new
+  // object on every read would never compare equal and re-render forever.
+  const storedUi = useSourceControlUiStore((state) => state.byRepository[uiKey]);
+  const ui = useMemo(
+    () => selectScmUiState(storedUi ? { [uiKey]: storedUi } : {}, uiKey),
+    [storedUi, uiKey],
+  );
   const updateUi = useSourceControlUiStore((state) => state.update);
   const toggleSection = useSourceControlUiStore((state) => state.toggleSection);
   const isOpen = (section: ScmSectionId) => !ui.collapsedSections.includes(section);
@@ -136,6 +156,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   const log = useScmLog(target, {
     limit: graphLimit,
     ...(ui.allBranches ? { all: true } : {}),
+    ...(ui.graphPath ? { path: ui.graphPath } : {}),
   });
   const gitLensViewData = useScmView(target, {
     view:
@@ -152,7 +173,44 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 : "contributors",
     includeRemote: true,
   });
-  const fileHistory = useScmTimeline(target, props.activeFilePath ?? "", 50);
+  // A pinned folder or file wins over whichever file happens to be open.
+  const historyPath = ui.historyPath ?? props.activeFilePath;
+  const fileHistory = useScmTimeline(target, historyPath ?? "", 50);
+  const [picker, setPicker] = useState<{ kind: ScmRefPickerKind; path: string } | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+
+  const pendingReveal = useRef<ScmSectionId | null>(null);
+  // Bumped per request, so a reveal still runs when the data was already cached.
+  const [revealRequest, setRevealRequest] = useState(0);
+
+  /** Open a section and bring it into view, as VS Code focuses the view it opens. */
+  const revealSection = (section: ScmSectionId, patch: Partial<typeof ui>) => {
+    updateUi(uiKey, {
+      ...patch,
+      collapsedSections: ui.collapsedSections.filter((entry) => entry !== section),
+    });
+    pendingReveal.current = section;
+    setRevealRequest((count) => count + 1);
+  };
+
+  // The scroll waits for the section's own data. Scrolling while it still
+  // reads "Loading" leaves too little below it to bring it to the top, and the
+  // rows then arrive out of view.
+  const historyReady = fileHistory.data !== null && !fileHistory.isPending;
+  const graphReady = log.data !== null && !log.isPending;
+  useEffect(() => {
+    const section = pendingReveal.current;
+    // Zero means nothing has asked for a reveal since the panel mounted.
+    if (revealRequest === 0 || !section) return;
+    if (section === "gitlens" && !historyReady) return;
+    if (section === "graph" && !graphReady) return;
+    pendingReveal.current = null;
+    requestAnimationFrame(() =>
+      rootRef.current
+        ?.querySelector(`[data-scm-section="${section}"]`)
+        ?.scrollIntoView({ block: "start", behavior: "smooth" }),
+    );
+  }, [historyReady, graphReady, revealRequest]);
   const commands = useScmCommands();
 
   // Each `refresh` is stable; the query-state objects around them are not, so
@@ -317,13 +375,68 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     else if (options.push) remoteAction(repository?.upstream ? "push" : "publish");
   };
 
+  const folderActions: ScmFolderActions = {
+    addToGitignore: (paths) =>
+      void run("Unable to add to .gitignore", () =>
+        commands.ignore({
+          environmentId: props.environmentId,
+          input: { cwd: props.cwd, paths },
+        }),
+      ),
+    copyPatch: (paths, staged) =>
+      void (async () => {
+        const result = await commands.patch({
+          environmentId: props.environmentId,
+          input: { cwd: props.cwd, paths, staged },
+        });
+        if (result._tag !== "Success") {
+          toastManager.add({
+            type: "error",
+            title: "Unable to copy changes",
+            description: commandErrorMessage(result.cause),
+          });
+          return;
+        }
+        try {
+          await writeTextToClipboard(result.value.patch);
+          toastManager.add({ type: "success", title: "Changes copied as a patch" });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Unable to copy changes",
+            description: error instanceof Error ? error.message : "The clipboard refused it.",
+          });
+        }
+      })(),
+    openChangesWithRevision: (folder) => setPicker({ kind: "revision", path: folder }),
+    openChangesWithRef: (folder) => setPicker({ kind: "ref", path: folder }),
+    openHistory: (folder) =>
+      revealSection("gitlens", {
+        gitLensView: "file-history",
+        historyPath: folder,
+        historyIsFolder: true,
+      }),
+    openHistoryInGraph: (folder) => revealSection("graph", { graphPath: folder }),
+    openVisualHistory: (folder) => props.onOpenTimeline(folder, "visual"),
+  };
+
   const diffInput: Omit<ScmDiffInput, "cwd"> | null = useMemo(() => {
     if (!selection) return null;
+    // The panel renders patches only, so neither side's full text is fetched.
     if (selection.kind === "commit") {
       return {
         ...(selection.path ? { path: selection.path } : {}),
         from: { _tag: "commitParent", sha: selection.sha },
         to: { _tag: "commit", sha: selection.sha },
+        includeContents: false,
+      };
+    }
+    if (selection.kind === "compare") {
+      return {
+        path: selection.path,
+        from: { _tag: "commit", sha: selection.ref },
+        to: { _tag: "working" },
+        includeContents: false,
       };
     }
     return {
@@ -331,6 +444,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
       ...(selection.entry.previousPath ? { previousPath: selection.entry.previousPath } : {}),
       from: selection.staged ? { _tag: "head" } : { _tag: "index" },
       to: selection.staged ? { _tag: "index" } : { _tag: "working" },
+      includeContents: false,
     };
   }, [selection]);
   const diff = useScmDiff(target, diffInput);
@@ -355,7 +469,9 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
         ? [selection.path ? fileName(selection.path) : null, selection.subject || selection.sha]
             .filter((part) => part !== null && part.length > 0)
             .join(" — ")
-        : `${fileName(selection.entry.path)} (${selection.staged ? "Staged" : "Working Tree"})`;
+        : selection.kind === "compare"
+          ? `${fileName(selection.path)} (${selection.label}) ↔ ${fileName(selection.path)} (Working Tree)`
+          : `${fileName(selection.entry.path)} (${selection.staged ? "Staged" : "Working Tree"})`;
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-8 shrink-0 items-center gap-1.5 border-border/60 border-b px-2">
@@ -420,7 +536,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   const repository = status.data?.repository ?? null;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+    <div ref={rootRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex h-8 shrink-0 items-center gap-1.5 border-border/60 border-b px-2">
         <span className="shrink-0 font-medium text-foreground text-xs">Source Control</span>
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
@@ -505,6 +621,25 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
       </div>
       <style>{SCM_REFRESH_KEYFRAMES}</style>
 
+      <ScmRefPickerDialog
+        open={picker !== null}
+        kind={picker?.kind ?? "revision"}
+        environmentId={props.environmentId}
+        cwd={props.cwd}
+        path={picker?.path ?? ""}
+        onOpenChange={(open) => {
+          if (!open) setPicker(null);
+        }}
+        onChoose={(choice) => {
+          if (!picker) return;
+          setSelection({
+            kind: "compare",
+            path: picker.path,
+            ref: choice.ref,
+            label: choice.label,
+          });
+        }}
+      />
       <ScrollArea className="min-h-0 flex-1">
         <div className="min-w-0">
           {status.error ? (
@@ -515,6 +650,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             title="Changes"
             open={isOpen("changes")}
             onToggle={() => toggleSection(uiKey, "changes")}
+            id="changes"
           >
             {status.data ? (
               <SourceControlChanges
@@ -535,6 +671,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 onOpenFile={props.onOpenFile}
                 onOpenTimeline={props.onOpenTimeline}
                 onAcceptSide={acceptSide}
+                folderActions={folderActions}
               />
             ) : (
               <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>
@@ -545,6 +682,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             title="Graph"
             open={isOpen("graph")}
             onToggle={() => toggleSection(uiKey, "graph")}
+            id="graph"
           >
             <SourceControlGraph
               log={log.data}
@@ -552,6 +690,8 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
               error={log.error}
               allBranches={ui.allBranches}
               onAllBranchesChange={(value) => updateUi(uiKey, { allBranches: value })}
+              pathFilter={ui.graphPath}
+              onClearPathFilter={() => updateUi(uiKey, { graphPath: null })}
               onRefresh={log.refresh}
               selectedSha={null}
               onSelectCommit={(commit) =>
@@ -574,6 +714,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             title="GitLens"
             open={isOpen("gitlens")}
             onToggle={() => toggleSection(uiKey, "gitlens")}
+            id="gitlens"
           >
             {status.data ? (
               <GitLensAccordion
@@ -585,8 +726,16 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 viewData={gitLensViewData.data}
                 viewPending={gitLensViewData.isPending}
                 viewError={gitLensViewData.error}
-                fileHistory={props.activeFilePath ? fileHistory.data : null}
-                fileHistoryPath={props.activeFilePath}
+                fileHistory={historyPath ? fileHistory.data : null}
+                fileHistoryPath={historyPath}
+                fileHistoryIsFolder={ui.historyPath !== null && ui.historyIsFolder}
+                fileHistoryPinned={ui.historyPath !== null}
+                onUnpinHistory={() =>
+                  updateUi(uiKey, { historyPath: null, historyIsFolder: false })
+                }
+                onOpenUncommitted={(path) =>
+                  setSelection({ kind: "compare", path, ref: "HEAD", label: "HEAD" })
+                }
                 onRefresh={requestRefresh}
                 onSelectCommit={(commit: ScmCommit) =>
                   setSelection({
@@ -621,8 +770,8 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                   )
                 }
                 onRemoteAction={remoteAction}
-                onOpenTimelineEntry={(path, sha) =>
-                  setSelection({ kind: "commit", path, sha, subject: "" })
+                onOpenTimelineEntry={(path, sha, subject) =>
+                  setSelection({ kind: "commit", path, sha, subject })
                 }
               />
             ) : (
