@@ -29,6 +29,8 @@ const RIGHT_PANEL_KINDS = [
   "pull-request",
   "pull-requests",
   "agents",
+  "source-control",
+  "timeline",
 ] as const;
 export type RightPanelKind = (typeof RIGHT_PANEL_KINDS)[number];
 
@@ -85,14 +87,27 @@ export type RightPanelSurface =
     }
   /** The thread's linked pull requests, one singleton tab beside any number of `pull-request` tabs. */
   | { id: "pull-requests"; kind: "pull-requests" }
-  | { id: "agents"; kind: "agents" };
+  | { id: "agents"; kind: "agents" }
+  /** The repository beside this thread: working tree, commit box, graph and history. */
+  | { id: "source-control"; kind: "source-control" }
+  | {
+      /**
+       * One file's commit history. Keyed by path so several timelines can sit
+       * beside each other, the way file surfaces do.
+       */
+      id: `timeline:${string}`;
+      kind: "timeline";
+      /** Workspace-relative, matching the file surface's own path convention. */
+      relativePath: string;
+    };
 
 const RIGHT_PANEL_STORAGE_KEY = "t3code:right-panel-state:v2";
 // v9 removed the "plan" surface kind (plans render inline in the transcript).
 // v10 keys pull-request surfaces by reference instead of a singleton tab.
 // v11 stops persisting the pull-request list's shared panel, so a restart opens the page fresh.
 // v12 adds the device surface.
-const RIGHT_PANEL_STORAGE_VERSION = 13;
+// v14 adds the source-control and timeline surfaces.
+const RIGHT_PANEL_STORAGE_VERSION = 14;
 
 /** A fixed workspace-level ref: each PR surface carries its own real environment. */
 export const PULL_REQUESTS_PANEL_REF = scopeThreadRef(
@@ -129,12 +144,13 @@ interface RightPanelStoreState {
   ) => boolean;
   open: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "timeline">,
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  openTimeline: (ref: ScopedThreadRef, relativePath: string) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
   openPullRequest: (
     ref: ScopedThreadRef,
@@ -168,7 +184,7 @@ interface RightPanelStoreState {
   toggleVisibility: (ref: ScopedThreadRef) => void;
   toggle: (
     ref: ScopedThreadRef,
-    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request">,
+    kind: Exclude<RightPanelKind, "file" | "terminal" | "pull-request" | "timeline">,
   ) => void;
   removeThread: (ref: ScopedThreadRef) => void;
 }
@@ -180,9 +196,11 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
 };
 
 const singletonSurface = (
-  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
+  kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request" | "timeline">,
 ): RightPanelSurface => {
   switch (kind) {
+    case "source-control":
+      return { id: "source-control", kind };
     case "diff":
       return { id: "diff", kind };
     case "files":
@@ -211,6 +229,12 @@ const fileSurface = (
   relativePath,
   revealLine,
   revealRequestId,
+});
+
+const timelineSurface = (relativePath: string): RightPanelSurface => ({
+  id: `timeline:${relativePath}`,
+  kind: "timeline",
+  relativePath,
 });
 
 const attachmentSurface = (attachment: ChatFileAttachment): RightPanelSurface => ({
@@ -380,6 +404,14 @@ export function migratePersistedRightPanelState(persistedState: unknown): {
                           ? surface.revealRequestId
                           : 0;
                       return [{ ...surface, revealLine, revealRequestId }];
+                    }
+                    if (surface.kind === "timeline") {
+                      // A timeline is only meaningful with the path it tracks.
+                      return typeof surface.relativePath === "string" &&
+                        surface.relativePath.length > 0 &&
+                        surface.id === `timeline:${surface.relativePath}`
+                        ? [surface]
+                        : [];
                     }
                     if (surface.kind === "pull-request") {
                       if (
@@ -606,6 +638,16 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             };
           }),
         ),
+      openTimeline: (ref, requestedPath) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const relativePath = requestedPath.replace(/\/+$/, "") || requestedPath;
+            // Unlike opening a file, a timeline does not replace the Files
+            // surface: it answers a question about a file the user is still
+            // browsing, so the explorer stays where it was.
+            return upsertSurface(current, timelineSurface(relativePath));
+          }),
+        ),
       openAttachment: (ref, attachment) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -796,6 +838,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
             const surfaces = current.surfaces.filter(
               (surface) =>
                 surface.kind !== "files" &&
+                surface.kind !== "source-control" &&
+                surface.kind !== "timeline" &&
                 (surface.kind !== "file" || surface.attachment !== undefined),
             );
             if (surfaces.length === current.surfaces.length) return current;

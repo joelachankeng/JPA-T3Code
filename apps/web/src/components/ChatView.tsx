@@ -619,6 +619,14 @@ const DevicePanel = lazy(() =>
   import("./device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
+const SourceControlPanel = lazy(() =>
+  import("./sourceControl/SourceControlPanel").then((module) => ({
+    default: module.SourceControlPanel,
+  })),
+);
+const TimelinePanel = lazy(() =>
+  import("./sourceControl/TimelinePanel").then((module) => ({ default: module.TimelinePanel })),
+);
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
   "input",
@@ -2013,6 +2021,23 @@ export default function ChatView(props: ChatViewProps) {
   const activeRightPanelSurface = useRightPanelStore((state) =>
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
+  /**
+   * The workspace file the panel is showing, if any. GitLens's File History
+   * view follows the open file, so the Source Control surface needs to know
+   * which one that is even when it is the surface in front.
+   */
+  const activeRightPanelFilePath = useRightPanelStore((state) => {
+    const surfaces = selectThreadRightPanelState(state.byThreadKey, activeThreadRef).surfaces;
+    const active = selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef);
+    if (active?.kind === "file" && !active.attachment) return active.relativePath;
+    if (active?.kind === "timeline") return active.relativePath;
+    // The Source Control surface is itself in front, so fall back to the most
+    // recently opened file tab beside it.
+    const lastFile = [...surfaces]
+      .reverse()
+      .find((surface) => surface.kind === "file" && !surface.attachment);
+    return lastFile?.kind === "file" ? lastFile.relativePath : null;
+  });
   const activePreviewState = useThreadPreviewState(activeThreadRef);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const resolvePreviewRuntimeTabId = useMemo(
@@ -4554,6 +4579,10 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addSourceControlSurface = useCallback(() => {
+    if (!activeThreadRef || !activeProject) return;
+    useRightPanelStore.getState().open(activeThreadRef, "source-control");
+  }, [activeProject, activeThreadRef]);
   const addAgentsSurface = useCallback(() => {
     if (!activeThreadRef) return;
     useRightPanelStore.getState().open(activeThreadRef, "agents");
@@ -4658,6 +4687,13 @@ export default function ChatView(props: ChatViewProps) {
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
       useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+    },
+    [activeProject, activeThreadRef],
+  );
+  const openTimelineSurface = useCallback(
+    (relativePath: string) => {
+      if (!activeThreadRef || !activeProject) return;
+      useRightPanelStore.getState().openTimeline(activeThreadRef, relativePath);
     },
     [activeProject, activeThreadRef],
   );
@@ -9672,6 +9708,30 @@ export default function ChatView(props: ChatViewProps) {
           }}
         />
       </Suspense>
+    ) : renderedRightPanelSurface?.kind === "source-control" &&
+      activeProject &&
+      activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <SourceControlPanel
+          key={`${activeThread.environmentId}:${activeWorkspaceRoot}`}
+          environmentId={activeThread.environmentId}
+          cwd={activeWorkspaceRoot}
+          projectName={activeProject.title}
+          onOpenFile={openFileSurface}
+          onOpenTimeline={openTimelineSurface}
+          activeFilePath={activeRightPanelFilePath}
+        />
+      </Suspense>
+    ) : renderedRightPanelSurface?.kind === "timeline" && activeWorkspaceRoot ? (
+      <Suspense fallback={null}>
+        <TimelinePanel
+          key={`${activeThread.environmentId}:${activeWorkspaceRoot}:${renderedRightPanelSurface.relativePath}`}
+          environmentId={activeThread.environmentId}
+          cwd={activeWorkspaceRoot}
+          relativePath={renderedRightPanelSurface.relativePath}
+          onOpenFile={openFileSurface}
+        />
+      </Suspense>
     ) : (renderedRightPanelSurface?.kind === "files" ||
         renderedRightPanelSurface?.kind === "file") &&
       ((activeProject && activeWorkspaceRoot) ||
@@ -9709,6 +9769,7 @@ export default function ChatView(props: ChatViewProps) {
               : 0
           }
           onOpenFile={openFileSurface}
+          onOpenTimeline={openTimelineSurface}
           onPendingChange={handleFilePendingChange}
           selectedFilePending={
             renderedRightPanelSurface.kind === "file" &&
@@ -10311,6 +10372,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddSourceControl={addSourceControlSurface}
           onAddPullRequest={addPullRequestSurface}
           onAddPullRequests={addPullRequestsSurface}
           onAddAgents={addAgentsSurface}
@@ -10319,6 +10381,7 @@ export default function ChatView(props: ChatViewProps) {
           terminalAvailable={activeProject !== null}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          sourceControlAvailable={activeProject !== null && activeWorkspaceRoot !== null}
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={pullRequestsSurfaceAvailable}
           agentsAvailable
@@ -10369,6 +10432,7 @@ export default function ChatView(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddSourceControl={addSourceControlSurface}
             onAddPullRequest={addPullRequestSurface}
             onAddPullRequests={addPullRequestsSurface}
             onAddAgents={addAgentsSurface}
@@ -10377,6 +10441,7 @@ export default function ChatView(props: ChatViewProps) {
             terminalAvailable={activeProject !== null}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            sourceControlAvailable={activeProject !== null && activeWorkspaceRoot !== null}
             pullRequestAvailable={pullRequestSurfaceAvailable}
             pullRequestsAvailable={pullRequestsSurfaceAvailable}
             agentsAvailable

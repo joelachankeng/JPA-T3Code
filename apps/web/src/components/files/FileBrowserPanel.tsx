@@ -36,6 +36,8 @@ interface FileBrowserPanelProps {
   /** Bumped when the same path should be revealed again (e.g. re-opened from search). */
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
+  /** Opens the file's commit history as its own surface, as VS Code's Open Timeline does. */
+  onOpenTimeline: (relativePath: string) => void;
   onRefreshSelectedFile?: () => void;
   workspaceMutationId: string | null;
 }
@@ -100,6 +102,7 @@ export default function FileBrowserPanel({
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
+  onOpenTimeline,
   onRefreshSelectedFile,
   workspaceMutationId,
 }: FileBrowserPanelProps) {
@@ -167,6 +170,7 @@ export default function FileBrowserPanel({
       return;
     }
     const relativePath = item.path.replace(/\/$/, "");
+    const isDirectory = item.path.endsWith("/");
     const mention = serializeComposerFileLink(relativePath);
     const pointer = contextMenuPointerRef.current;
     const pointerIsFresh = pointer !== null && performance.now() - pointer.at < 1000;
@@ -179,6 +183,18 @@ export default function FileBrowserPanel({
         [
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
+          // A directory has no single history to show, so the entry is only
+          // offered for files.
+          ...(isDirectory
+            ? []
+            : [
+                {
+                  id: "open-timeline" as const,
+                  label: "Open Timeline",
+                  icon: "clock" as const,
+                  separatorBefore: true,
+                },
+              ]),
         ],
         position,
       );
@@ -193,6 +209,10 @@ export default function FileBrowserPanel({
             description: error instanceof Error ? error.message : "An error occurred.",
           });
         }
+        return;
+      }
+      if (clicked === "open-timeline") {
+        onOpenTimeline(relativePath);
         return;
       }
       if (clicked === "add-to-chat") {

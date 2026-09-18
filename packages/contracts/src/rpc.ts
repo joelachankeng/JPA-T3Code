@@ -24,6 +24,28 @@ import {
   HostPowerSnapshot,
 } from "./background.ts";
 import {
+  ScmBranchInput,
+  ScmCommitDetailInput,
+  ScmCommitDetailResult,
+  ScmCommitInput,
+  ScmCommitResult,
+  ScmDiffInput,
+  ScmDiffResult,
+  ScmLogInput,
+  ScmLogResult,
+  ScmRemoteActionInput,
+  ScmRemoteActionResult,
+  ScmStageInput,
+  ScmStashInput,
+  ScmStatusInput,
+  ScmStatusResult,
+  ScmTimelineInput,
+  ScmTimelineResult,
+  ScmViewInput,
+  ScmViewResult,
+  SourceControlPanelError,
+} from "./sourceControlPanel.ts";
+import {
   FilesystemBrowseInput,
   FilesystemBrowseResult,
   FilesystemBrowseError,
@@ -320,6 +342,17 @@ export const WS_METHODS = {
   gitRunStackedAction: "git.runStackedAction",
   gitResolvePullRequest: "git.resolvePullRequest",
   gitPreparePullRequestThread: "git.preparePullRequestThread",
+  scmStatus: "scm.status",
+  scmStage: "scm.stage",
+  scmCommit: "scm.commit",
+  scmRemoteAction: "scm.remoteAction",
+  scmStash: "scm.stash",
+  scmBranch: "scm.branch",
+  scmLog: "scm.log",
+  scmCommitDetail: "scm.commitDetail",
+  scmView: "scm.view",
+  scmDiff: "scm.diff",
+  scmTimeline: "scm.timeline",
 
   // Review methods
   reviewGetDiffPreview: "review.getDiffPreview",
@@ -1039,6 +1072,71 @@ const WsGitPreparePullRequestThreadRpc = Rpc.make(WS_METHODS.gitPreparePullReque
   error: Schema.Union([GitManagerServiceError, EnvironmentAuthorizationError]),
 });
 
+const ScmError = Schema.Union([SourceControlPanelError, EnvironmentAuthorizationError]);
+
+const WsScmStatusRpc = Rpc.make(WS_METHODS.scmStatus, {
+  payload: ScmStatusInput,
+  success: ScmStatusResult,
+  error: ScmError,
+});
+
+const WsScmStageRpc = Rpc.make(WS_METHODS.scmStage, {
+  payload: ScmStageInput,
+  error: ScmError,
+});
+
+const WsScmCommitRpc = Rpc.make(WS_METHODS.scmCommit, {
+  payload: ScmCommitInput,
+  success: ScmCommitResult,
+  error: ScmError,
+});
+
+const WsScmRemoteActionRpc = Rpc.make(WS_METHODS.scmRemoteAction, {
+  payload: ScmRemoteActionInput,
+  success: ScmRemoteActionResult,
+  error: ScmError,
+});
+
+const WsScmStashRpc = Rpc.make(WS_METHODS.scmStash, {
+  payload: ScmStashInput,
+  error: ScmError,
+});
+
+const WsScmBranchRpc = Rpc.make(WS_METHODS.scmBranch, {
+  payload: ScmBranchInput,
+  error: ScmError,
+});
+
+const WsScmLogRpc = Rpc.make(WS_METHODS.scmLog, {
+  payload: ScmLogInput,
+  success: ScmLogResult,
+  error: ScmError,
+});
+
+const WsScmCommitDetailRpc = Rpc.make(WS_METHODS.scmCommitDetail, {
+  payload: ScmCommitDetailInput,
+  success: ScmCommitDetailResult,
+  error: ScmError,
+});
+
+const WsScmViewRpc = Rpc.make(WS_METHODS.scmView, {
+  payload: ScmViewInput,
+  success: ScmViewResult,
+  error: ScmError,
+});
+
+const WsScmDiffRpc = Rpc.make(WS_METHODS.scmDiff, {
+  payload: ScmDiffInput,
+  success: ScmDiffResult,
+  error: ScmError,
+});
+
+const WsScmTimelineRpc = Rpc.make(WS_METHODS.scmTimeline, {
+  payload: ScmTimelineInput,
+  success: ScmTimelineResult,
+  error: ScmError,
+});
+
 const WsVcsListRefsRpc = Rpc.make(WS_METHODS.vcsListRefs, {
   payload: VcsListRefsInput,
   success: VcsListRefsResult,
@@ -1466,6 +1564,17 @@ export const WsRpcGroup = RpcGroup.make(
   WsGitResolvePullRequestRpc,
   WsGitPreparePullRequestThreadRpc,
   WsVcsListRefsRpc,
+  WsScmStatusRpc,
+  WsScmStageRpc,
+  WsScmCommitRpc,
+  WsScmRemoteActionRpc,
+  WsScmStashRpc,
+  WsScmBranchRpc,
+  WsScmLogRpc,
+  WsScmCommitDetailRpc,
+  WsScmViewRpc,
+  WsScmDiffRpc,
+  WsScmTimelineRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
   WsVcsCreateRefRpc,

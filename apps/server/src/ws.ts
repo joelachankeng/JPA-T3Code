@@ -134,6 +134,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
+import * as SourceControlPanelService from "./sourceControl/SourceControlPanelService.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -550,6 +551,7 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const sourceControlPanel = yield* SourceControlPanelService.SourceControlPanelService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3283,6 +3285,64 @@ const makeWsRpcLayer = (
               .preparePullRequestThread(input)
               .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
             { "rpc.aggregate": "git" },
+          ),
+        [WS_METHODS.scmStatus]: (input) =>
+          observeRpcEffect(WS_METHODS.scmStatus, sourceControlPanel.status(input), {
+            "rpc.aggregate": "scm",
+          }),
+        [WS_METHODS.scmLog]: (input) =>
+          observeRpcEffect(WS_METHODS.scmLog, sourceControlPanel.log(input), {
+            "rpc.aggregate": "scm",
+          }),
+        [WS_METHODS.scmCommitDetail]: (input) =>
+          observeRpcEffect(WS_METHODS.scmCommitDetail, sourceControlPanel.commitDetail(input), {
+            "rpc.aggregate": "scm",
+          }),
+        [WS_METHODS.scmView]: (input) =>
+          observeRpcEffect(WS_METHODS.scmView, sourceControlPanel.view(input), {
+            "rpc.aggregate": "scm",
+          }),
+        [WS_METHODS.scmDiff]: (input) =>
+          observeRpcEffect(WS_METHODS.scmDiff, sourceControlPanel.diff(input), {
+            "rpc.aggregate": "scm",
+          }),
+        [WS_METHODS.scmTimeline]: (input) =>
+          observeRpcEffect(WS_METHODS.scmTimeline, sourceControlPanel.timeline(input), {
+            "rpc.aggregate": "scm",
+          }),
+        // Every mutation refreshes the shared VCS status, so the branch chip and
+        // the thread's own change indicators follow the panel without a reload.
+        [WS_METHODS.scmStage]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scmStage,
+            sourceControlPanel.stage(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "scm" },
+          ),
+        [WS_METHODS.scmCommit]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scmCommit,
+            sourceControlPanel.commit(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "scm" },
+          ),
+        [WS_METHODS.scmRemoteAction]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scmRemoteAction,
+            sourceControlPanel
+              .remoteAction(input)
+              .pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "scm" },
+          ),
+        [WS_METHODS.scmStash]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scmStash,
+            sourceControlPanel.stash(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "scm" },
+          ),
+        [WS_METHODS.scmBranch]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.scmBranch,
+            sourceControlPanel.branch(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+            { "rpc.aggregate": "scm" },
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
           observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {

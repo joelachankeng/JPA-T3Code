@@ -85,6 +85,36 @@ For a local Git repository without a remote, **Publish Repository** creates a ho
 adds it as `origin`, and pushes your commits. If there are no commits yet, it creates the remote;
 make your first commit before pushing.
 
+## The Source Control surface
+
+Open **Source control** from a thread's panel launcher, the panel's **+** menu, or by pressing `S`
+while the launcher is showing. It works on the repository the thread's project sits in, whether that
+repository is on this machine or on a remote environment.
+
+The surface has three sections:
+
+- **GitLens** groups related views behind one header. Switch between Commits, Branches, Remotes,
+  Stashes, Tags, Worktrees, Contributors, and the open file's history using the buttons in that
+  header.
+- **Changes** lists the working tree. Select a file to see its diff, use the checkbox to stage or
+  unstage it, and write a message and press **Commit** to commit. The button's dropdown also offers
+  Commit & Push, Commit & Sync, and Amend Last Commit. With nothing staged, committing includes every
+  tracked change. Group headers carry stage, unstage, and discard for a whole group, and the toolbar
+  switches the list between a flat list and a folder tree.
+- **Graph** draws the commit history, with a lane per line of development and chips for the branches
+  and tags pointing at each commit. Select a commit to see everything it changed. The filter at the
+  top switches between the current branch and all branches.
+
+The button beside the branch name in the header syncs with the upstream branch and shows how many
+commits are waiting in each direction. On a branch that has no upstream yet, it publishes the branch.
+
+## File timelines
+
+Right-click a file in either the **Files** or the **Source control** surface and choose
+**Open Timeline** to see every commit that touched it, newest first, with its author and age. Select
+an entry to see what that commit changed in that file. A file with uncommitted edits shows those at
+the top of the list. The timeline opens as its own tab, so you can keep several open at once.
+
 ## Create a pull request
 
 Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit

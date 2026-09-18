@@ -19,9 +19,11 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  FileClock,
   FileDiff,
   Files,
   Globe2,
+  GitBranch,
   Plus,
   TerminalSquare,
   Volume2,
@@ -113,6 +115,7 @@ interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddSourceControl: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddAgents: () => void;
@@ -121,6 +124,7 @@ interface RightPanelTabsProps {
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  sourceControlAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
@@ -156,6 +160,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequests: "No linked pull requests are available for this thread.",
   agents: "Agents are only available from a thread.",
   device: "Devices are only available from a thread.",
+  sourceControl: "Source control is only available when a project is open.",
 } as const;
 
 /** Overlays that must win over the launcher's letter shortcuts. */
@@ -180,6 +185,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequests: "No linked pull requests available.",
   agents: "Available from a thread.",
   device: "Available from a thread.",
+  sourceControl: "Available when a project is open.",
 } as const;
 
 type TabContextMenuAction =
@@ -316,6 +322,7 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddSourceControl: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddAgents: () => void;
@@ -324,6 +331,7 @@ function RightPanelEmptyState(props: {
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  sourceControlAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   agentsAvailable: boolean;
@@ -359,6 +367,15 @@ function RightPanelEmptyState(props: {
       available: props.filesAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
       onClick: props.onAddFiles,
+      badgeCount: 0,
+    },
+    {
+      label: "Source control",
+      icon: GitBranch,
+      shortcut: "S",
+      available: props.sourceControlAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.sourceControl,
+      onClick: props.onAddSourceControl,
       badgeCount: 0,
     },
     {
@@ -614,6 +631,12 @@ function surfaceTitle(
       return "Diff";
     case "files":
       return "Files";
+    case "source-control":
+      return "Source Control";
+    case "timeline":
+      return `Timeline: ${surface.relativePath.slice(
+        Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
+      )}`;
     case "file":
       return surface.relativePath.slice(
         Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
@@ -691,6 +714,10 @@ function SurfaceIcon({
       return <FileDiff className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
+    case "source-control":
+      return <GitBranch className="size-3 shrink-0" />;
+    case "timeline":
+      return <FileClock className="size-3 shrink-0" />;
     case "file":
       return (
         <PierreEntryIcon
@@ -884,6 +911,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       available: props.filesAvailable,
       disabledReason: SURFACE_DISABLED_REASONS.files,
       onClick: props.onAddFiles,
+    },
+    {
+      label: "Source control",
+      icon: GitBranch,
+      shortcut: "S",
+      available: props.sourceControlAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.sourceControl,
+      onClick: props.onAddSourceControl,
     },
     {
       label: "Diff",
@@ -1393,6 +1428,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddSourceControl={props.onAddSourceControl}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddAgents={props.onAddAgents}
@@ -1401,6 +1437,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
+            sourceControlAvailable={props.sourceControlAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             agentsAvailable={props.agentsAvailable}
