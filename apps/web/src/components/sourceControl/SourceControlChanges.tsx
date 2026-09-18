@@ -85,7 +85,13 @@ function ToolbarButton(props: {
             size="icon-xs"
             aria-label={props.label}
             disabled={props.disabled ?? false}
-            onClick={props.onClick}
+            onClick={(event) => {
+              // A row action is not also a request to open the row. Without
+              // this, staging or discarding a file would leave the panel
+              // showing that file's diff instead of the change list.
+              event.stopPropagation();
+              props.onClick();
+            }}
           />
         }
       >

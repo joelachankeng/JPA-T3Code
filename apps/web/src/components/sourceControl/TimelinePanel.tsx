@@ -28,6 +28,7 @@ import {
   statusTitle,
 } from "./sourceControlPanel.logic";
 import { useScmContextMenu } from "./useScmContextMenu";
+import { useDelayedFlag, useScmAutoRefresh } from "./useScmAutoRefresh";
 import { useScmDiff, useScmTimeline, type ScmTarget } from "./useSourceControl";
 
 const PAGE_SIZE = 100;
@@ -51,6 +52,10 @@ export function TimelinePanel(props: TimelinePanelProps) {
   const target: ScmTarget = { environmentId: props.environmentId, cwd: props.cwd };
   const timeline = useScmTimeline(target, props.relativePath, limit);
   const showContextMenu = useScmContextMenu();
+
+  // The list follows the file; a diff of a past commit cannot change under it.
+  useScmAutoRefresh({ enabled: selection === null, refresh: timeline.refresh });
+  const showRefreshing = useDelayedFlag(timeline.isPending);
   const entries = timeline.data?.entries ?? [];
 
   const diffInput: Omit<ScmDiffInput, "cwd"> | null = useMemo(() => {
@@ -161,9 +166,9 @@ export function TimelinePanel(props: TimelinePanelProps) {
               />
             }
           >
-            <RefreshCw className={cn("size-3.5", timeline.isPending && "animate-spin")} />
+            <RefreshCw className={cn("size-3.5", showRefreshing && "animate-spin")} />
           </TooltipTrigger>
-          <TooltipPopup>Refresh</TooltipPopup>
+          <TooltipPopup>{showRefreshing ? "Refreshing…" : "Refresh"}</TooltipPopup>
         </Tooltip>
       </header>
 

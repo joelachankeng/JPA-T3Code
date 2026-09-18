@@ -1,11 +1,13 @@
 /**
  * The Source Control surface.
  *
- * Three accordions in the order VS Code's Source Control container shows them
- * with GitLens installed: the GitLens grouped views, the repository's working
- * tree and commit box, then the commit graph. Clicking a change opens its diff
- * in place, with a back control, because T3 Code's right panel is one surface
+ * Three accordions: the working tree with its commit box, the commit graph,
+ * and the GitLens grouped views last. Clicking a change opens its diff in
+ * place, with a back control, because T3 Code's right panel is one surface
  * rather than an editor area VS Code can open a second tab in.
+ *
+ * Presentation state lives in a store rather than in this component, because
+ * the panel unmounts whenever another surface is brought forward.
  */
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import type {
@@ -36,10 +38,17 @@ import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 
-import { GitLensAccordion, type GitLensViewId } from "./GitLensAccordion";
+import { GitLensAccordion } from "./GitLensAccordion";
 import { SourceControlChanges, type ScmGroupId } from "./SourceControlChanges";
 import { SourceControlGraph } from "./SourceControlGraph";
 import { fileName, syncLabel } from "./sourceControlPanel.logic";
+import {
+  scmUiKey,
+  selectScmUiState,
+  useSourceControlUiStore,
+  type ScmSectionId,
+} from "./sourceControlUiStore";
+import { useDelayedFlag, useMinimumVisible, useScmAutoRefresh } from "./useScmAutoRefresh";
 import {
   commandErrorMessage,
   useScmCommands,
@@ -53,7 +62,15 @@ import {
 
 const GRAPH_PAGE_SIZE = 100;
 
-type SectionId = "gitlens" | "changes" | "graph";
+/**
+ * Sweep for the refresh bar. Scoped to this component's own animation name so
+ * it cannot collide with anything else, and only mounted while a refresh is
+ * actually in flight.
+ */
+const SCM_REFRESH_KEYFRAMES = `@keyframes scm-refresh {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(400%); }
+}`;
 
 /** What the in-panel diff view is currently showing. */
 type DiffSelection =
@@ -103,34 +120,34 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
   const target: ScmTarget = { environmentId: props.environmentId, cwd: props.cwd };
   const { resolvedTheme } = useTheme();
 
-  const [openSections, setOpenSections] = useState<ReadonlySet<SectionId>>(
-    () => new Set<SectionId>(["changes", "graph"]),
-  );
-  const [gitLensView, setGitLensView] = useState<GitLensViewId>("commits");
-  const [viewAsTree, setViewAsTree] = useState(false);
-  const [message, setMessage] = useState("");
+  // Presentation the user chose, remembered across the panel unmounting.
+  const uiKey = scmUiKey({ environmentId: props.environmentId, cwd: props.cwd });
+  const ui = useSourceControlUiStore((state) => selectScmUiState(state.byRepository, uiKey));
+  const updateUi = useSourceControlUiStore((state) => state.update);
+  const toggleSection = useSourceControlUiStore((state) => state.toggleSection);
+  const isOpen = (section: ScmSectionId) => !ui.collapsedSections.includes(section);
+
   const [amend, setAmend] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [allBranches, setAllBranches] = useState(false);
   const [graphLimit, setGraphLimit] = useState(GRAPH_PAGE_SIZE);
   const [selection, setSelection] = useState<DiffSelection | null>(null);
 
   const status = useScmStatus(target);
   const log = useScmLog(target, {
     limit: graphLimit,
-    ...(allBranches ? { all: true } : {}),
+    ...(ui.allBranches ? { all: true } : {}),
   });
   const gitLensViewData = useScmView(target, {
     view:
-      gitLensView === "branches"
+      ui.gitLensView === "branches"
         ? "branches"
-        : gitLensView === "remotes"
+        : ui.gitLensView === "remotes"
           ? "remotes"
-          : gitLensView === "stashes"
+          : ui.gitLensView === "stashes"
             ? "stashes"
-            : gitLensView === "tags"
+            : ui.gitLensView === "tags"
               ? "tags"
-              : gitLensView === "worktrees"
+              : ui.gitLensView === "worktrees"
                 ? "worktrees"
                 : "contributors",
     includeRemote: true,
@@ -148,6 +165,24 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     refreshLog();
     refreshView();
   };
+
+  // A diff view is a snapshot of one revision; polling behind it would refetch
+  // the list nobody is looking at.
+  useScmAutoRefresh({ enabled: selection === null, refresh: refreshAll });
+
+  const isRefreshing = status.isPending || log.isPending || gitLensViewData.isPending;
+  // A background poll only reports itself when it is slow enough to be worth
+  // noticing; a refresh the user asked for always shows, even when it is quick.
+  const [refreshTick, setRefreshTick] = useState(0);
+  const requestRefresh = () => {
+    setRefreshTick((tick) => tick + 1);
+    refreshAll();
+  };
+  // Both hooks run every render: `||` between two hook calls would skip the
+  // second whenever the first is true, and hook order has to stay stable.
+  const refreshIsSlow = useDelayedFlag(isRefreshing || busy);
+  const refreshWasRequested = useMinimumVisible(refreshTick);
+  const showRefreshing = refreshIsSlow || refreshWasRequested;
 
   /** Run a mutation, surface git's own words on failure, then refresh. */
   const run = async (
@@ -258,7 +293,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
     );
 
   const commit = async (options: { readonly push: boolean; readonly sync: boolean }) => {
-    const trimmed = message.trim();
+    const trimmed = ui.message.trim();
     const repository = status.data?.repository;
     const stagedCount = status.data?.staged.length ?? 0;
     const ok = await run("Unable to commit", () =>
@@ -276,7 +311,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
       }),
     );
     if (!ok) return;
-    setMessage("");
+    updateUi(uiKey, { message: "" });
     setAmend(false);
     if (options.sync) remoteAction("sync");
     else if (options.push) remoteAction(repository?.upstream ? "push" : "publish");
@@ -445,15 +480,30 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 variant="ghost-muted"
                 size="icon-xs"
                 aria-label="Refresh source control"
-                onClick={refreshAll}
+                onClick={requestRefresh}
               />
             }
           >
-            <RefreshCw className={cn("size-3.5", status.isPending && "animate-spin")} />
+            <RefreshCw className={cn("size-3.5", showRefreshing && "animate-spin")} />
           </TooltipTrigger>
-          <TooltipPopup>Refresh</TooltipPopup>
+          <TooltipPopup>{showRefreshing ? "Refreshing…" : "Refresh"}</TooltipPopup>
         </Tooltip>
       </header>
+      {/*
+        A one-pixel bar under the header, shown only once a refresh has been
+        running long enough to be worth reporting. It animates while it is up
+        and then leaves, rather than painting continuously.
+      */}
+      <div
+        aria-hidden="true"
+        className={cn(
+          "h-px shrink-0 overflow-hidden transition-opacity duration-150",
+          showRefreshing ? "opacity-100" : "opacity-0",
+        )}
+      >
+        <div className="h-full w-1/3 animate-[scm-refresh_1.1s_ease-in-out_infinite] bg-info" />
+      </div>
+      <style>{SCM_REFRESH_KEYFRAMES}</style>
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="min-w-0">
@@ -462,21 +512,73 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
           ) : null}
 
           <Section
+            title="Changes"
+            open={isOpen("changes")}
+            onToggle={() => toggleSection(uiKey, "changes")}
+          >
+            {status.data ? (
+              <SourceControlChanges
+                status={status.data}
+                viewAsTree={ui.viewAsTree}
+                onViewAsTreeChange={(value) => updateUi(uiKey, { viewAsTree: value })}
+                message={ui.message}
+                onMessageChange={(value) => updateUi(uiKey, { message: value })}
+                amend={amend}
+                onAmendChange={setAmend}
+                busy={busy}
+                onCommit={(options) => void commit(options)}
+                onStage={stage}
+                onUnstage={unstage}
+                onDiscard={(entries) => void discard(entries)}
+                onStash={stash}
+                onOpenDiff={(entry, staged) => setSelection({ kind: "working", entry, staged })}
+                onOpenFile={props.onOpenFile}
+                onOpenTimeline={props.onOpenTimeline}
+                onAcceptSide={acceptSide}
+              />
+            ) : (
+              <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>
+            )}
+          </Section>
+
+          <Section
+            title="Graph"
+            open={isOpen("graph")}
+            onToggle={() => toggleSection(uiKey, "graph")}
+          >
+            <SourceControlGraph
+              log={log.data}
+              isPending={log.isPending}
+              error={log.error}
+              allBranches={ui.allBranches}
+              onAllBranchesChange={(value) => updateUi(uiKey, { allBranches: value })}
+              onRefresh={log.refresh}
+              selectedSha={null}
+              onSelectCommit={(commit) =>
+                setSelection({
+                  kind: "commit",
+                  path: null,
+                  sha: commit.sha,
+                  subject: commit.subject,
+                })
+              }
+              onLoadMore={
+                log.data?.nextSkip !== null && log.data !== null
+                  ? () => setGraphLimit((value) => value + GRAPH_PAGE_SIZE)
+                  : null
+              }
+            />
+          </Section>
+
+          <Section
             title="GitLens"
-            open={openSections.has("gitlens")}
-            onToggle={() =>
-              setOpenSections((current) => {
-                const next = new Set(current);
-                if (next.has("gitlens")) next.delete("gitlens");
-                else next.add("gitlens");
-                return next;
-              })
-            }
+            open={isOpen("gitlens")}
+            onToggle={() => toggleSection(uiKey, "gitlens")}
           >
             {status.data ? (
               <GitLensAccordion
-                view={gitLensView}
-                onViewChange={setGitLensView}
+                view={ui.gitLensView}
+                onViewChange={(view) => updateUi(uiKey, { gitLensView: view })}
                 status={status.data}
                 log={log.data}
                 logPending={log.isPending}
@@ -485,7 +587,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 viewError={gitLensViewData.error}
                 fileHistory={props.activeFilePath ? fileHistory.data : null}
                 fileHistoryPath={props.activeFilePath}
-                onRefresh={refreshAll}
+                onRefresh={requestRefresh}
                 onSelectCommit={(commit: ScmCommit) =>
                   setSelection({
                     kind: "commit",
@@ -526,79 +628,6 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
             ) : (
               <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>
             )}
-          </Section>
-
-          <Section
-            title="Changes"
-            open={openSections.has("changes")}
-            onToggle={() =>
-              setOpenSections((current) => {
-                const next = new Set(current);
-                if (next.has("changes")) next.delete("changes");
-                else next.add("changes");
-                return next;
-              })
-            }
-          >
-            {status.data ? (
-              <SourceControlChanges
-                status={status.data}
-                viewAsTree={viewAsTree}
-                onViewAsTreeChange={setViewAsTree}
-                message={message}
-                onMessageChange={setMessage}
-                amend={amend}
-                onAmendChange={setAmend}
-                busy={busy}
-                onCommit={(options) => void commit(options)}
-                onStage={stage}
-                onUnstage={unstage}
-                onDiscard={(entries) => void discard(entries)}
-                onStash={stash}
-                onOpenDiff={(entry, staged) => setSelection({ kind: "working", entry, staged })}
-                onOpenFile={props.onOpenFile}
-                onOpenTimeline={props.onOpenTimeline}
-                onAcceptSide={acceptSide}
-              />
-            ) : (
-              <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>
-            )}
-          </Section>
-
-          <Section
-            title="Graph"
-            open={openSections.has("graph")}
-            onToggle={() =>
-              setOpenSections((current) => {
-                const next = new Set(current);
-                if (next.has("graph")) next.delete("graph");
-                else next.add("graph");
-                return next;
-              })
-            }
-          >
-            <SourceControlGraph
-              log={log.data}
-              isPending={log.isPending}
-              error={log.error}
-              allBranches={allBranches}
-              onAllBranchesChange={setAllBranches}
-              onRefresh={log.refresh}
-              selectedSha={null}
-              onSelectCommit={(commit) =>
-                setSelection({
-                  kind: "commit",
-                  path: null,
-                  sha: commit.sha,
-                  subject: commit.subject,
-                })
-              }
-              onLoadMore={
-                log.data?.nextSkip !== null && log.data !== null
-                  ? () => setGraphLimit((value) => value + GRAPH_PAGE_SIZE)
-                  : null
-              }
-            />
           </Section>
         </div>
       </ScrollArea>
