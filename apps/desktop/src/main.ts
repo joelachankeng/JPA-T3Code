@@ -98,7 +98,13 @@ const resolveDesktopSshCliRunner = (
       nodeEngineRange: serverPackageJson.engines.node,
     };
   }
-  return { archiveVersion: environment.appVersion };
+  const releaseBaseUrl = Option.getOrUndefined(environment.cliReleaseBaseUrl);
+  // A fork publishes its own archives, so the origin travels with the version.
+  // Unset keeps the upstream default the installers already use.
+  return {
+    archiveVersion: environment.appVersion,
+    ...(releaseBaseUrl === undefined ? {} : { releaseBaseUrl }),
+  };
 };
 
 const desktopSshEnvironmentLayer = Layer.unwrap(

@@ -1,3 +1,4 @@
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 import { OtlpHeadersFromString, OtlpProtocol } from "@t3tools/shared/observability";
 import * as Config from "effect/Config";
 import * as ConfigProvider from "effect/ConfigProvider";
@@ -41,6 +42,10 @@ export const DesktopConfig = Config.all({
   devServerUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("T3CODE_DESKTOP_APP_USER_MODEL_ID"),
   devRemoteT3ServerEntryPath: trimmedString("T3CODE_DEV_REMOTE_T3_SERVER_ENTRY_PATH"),
+  /** Mirror the remote CLI archives are provisioned from; a fork publishing its
+      own releases points SSH environments at them without repointing every
+      other installer. Same variable the server's own updater reads. */
+  cliReleaseBaseUrl: trimmedString(CLI_RELEASE_BASE_URL_ENV),
   configuredBackendPort: Config.Port("T3CODE_PORT").pipe(Config.option),
   commitHashOverride: trimmedString("T3CODE_COMMIT_HASH"),
   desktopLanHostOverride: trimmedString("T3CODE_DESKTOP_LAN_HOST"),
