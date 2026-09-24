@@ -76,7 +76,7 @@ describe("branding logic", () => {
     expect(
       resolveServerBackedAppStageLabel({
         primaryServerVersion: "0.0.28-nightly.20260616.12",
-        fallbackStageLabel: "Alpha",
+        fallbackStageLabel: "JPA",
       }),
     ).toBe("Nightly");
   });
@@ -85,8 +85,8 @@ describe("branding logic", () => {
     expect(
       resolveServerBackedAppDisplayName({
         baseName: "T3 Code",
-        fallbackDisplayName: "T3 Code (Alpha)",
-        fallbackStageLabel: "Alpha",
+        fallbackDisplayName: "T3 Code (JPA)",
+        fallbackStageLabel: "JPA",
         primaryServerVersion: "0.0.28-nightly.20260616.12",
       }),
     ).toBe("T3 Code (Nightly)");
@@ -96,21 +96,21 @@ describe("branding logic", () => {
     expect(
       resolveServerBackedAppDisplayName({
         baseName: "T3 Code",
-        fallbackDisplayName: "T3 Code (Alpha)",
-        fallbackStageLabel: "Alpha",
+        fallbackDisplayName: "T3 Code (JPA)",
+        fallbackStageLabel: "JPA",
         primaryServerVersion: "0.0.27",
       }),
-    ).toBe("T3 Code (Alpha)");
+    ).toBe("T3 Code (JPA)");
   });
 
   it("keeps the fallback display name for malformed nightly primary server versions", () => {
     expect(
       resolveServerBackedAppDisplayName({
         baseName: "T3 Code",
-        fallbackDisplayName: "T3 Code (Alpha)",
-        fallbackStageLabel: "Alpha",
+        fallbackDisplayName: "T3 Code (JPA)",
+        fallbackStageLabel: "JPA",
         primaryServerVersion: "0.0.28-nightly.20260616",
       }),
-    ).toBe("T3 Code (Alpha)");
+    ).toBe("T3 Code (JPA)");
   });
 });

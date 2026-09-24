@@ -24,6 +24,7 @@ The main addition is a **Source control** surface in the right panel, built to w
 - **GitLens section.** Branches, Remotes, Tags, Stashes, Worktrees, and Contributors views, plus File History and Folder History that you can pin to a path.
 - **File timelines.** **Open Timeline** from the Files or Source control surface lists every commit that touched a file or folder, with an inline diff for each. A visual view charts commits over time by author.
 - **Server.** New `scm.*` WebSocket RPCs (status, stage, commit, remote actions, stash, branch, log, commit detail, views, diff, timeline, ignore, patch, show), with read and operate scopes, typed in `packages/contracts`.
+- **Fork branding.** Release builds are named **T3 Code (JPA)** instead of **T3 Code (Alpha)**, so this fork is distinguishable from an official install in the Windows Start menu, the Linux app launcher, and the window title. Dev and nightly builds keep their own labels, and the legacy user-data directory name is unchanged so existing data still migrates.
 
 ---
 
