@@ -85,6 +85,7 @@ import {
   useScmView,
   type ScmTarget,
 } from "./useSourceControl";
+import { OUTDATED_ENVIRONMENT_MESSAGE } from "./sourceControlError";
 
 const GRAPH_PAGE_SIZE = 100;
 
@@ -163,7 +164,41 @@ export interface SourceControlPanelProps {
   readonly activeFilePath: string | null;
 }
 
+/**
+ * Gate the surface on the environment actually serving it.
+ *
+ * The `scm.*` methods arrived with this surface, so a server that predates it
+ * rejects every one as an unknown method. The check lives out here, above the
+ * panel's query hooks, because hooks cannot be skipped once mounted: asking
+ * the environment once is what keeps the panel from rediscovering the same
+ * answer through five failed requests on every refresh.
+ */
 export function SourceControlPanel(props: SourceControlPanelProps) {
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  // An unread config is not yet a "no": reporting one before the environment
+  // has answered would flash an error over a surface that is about to work.
+  if (serverConfig !== null && serverConfig.environment.capabilities.sourceControlPanel !== true) {
+    return <SourceControlUnsupported projectName={props.projectName} />;
+  }
+  return <SourceControlPanelContent {...props} />;
+}
+
+/** Shown where the environment's server cannot answer the surface at all. */
+function SourceControlUnsupported(props: { readonly projectName: string }) {
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header className="flex h-8 shrink-0 items-center gap-1.5 border-border/60 border-b px-2">
+        <span className="truncate font-medium text-foreground text-xs">Source Control</span>
+      </header>
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 px-3 py-3">
+        <p className="truncate text-muted-foreground text-xs">{props.projectName}</p>
+        <p className="text-foreground text-xs">{OUTDATED_ENVIRONMENT_MESSAGE}</p>
+      </div>
+    </div>
+  );
+}
+
+function SourceControlPanelContent(props: SourceControlPanelProps) {
   const target: ScmTarget = { environmentId: props.environmentId, cwd: props.cwd };
   const { resolvedTheme } = useTheme();
 
@@ -720,6 +755,14 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
 
   const repository = status.data?.repository ?? null;
 
+  // Sections that need the repository status show it once it arrives. A failed
+  // status query never produces data, so "Loading…" would sit there forever
+  // claiming work is still in flight; the failure itself is reported above the
+  // sections instead.
+  const awaitingStatus = status.error ? null : (
+    <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>
+  );
+
   return (
     <div ref={rootRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex h-8 shrink-0 items-center gap-1.5 border-border/60 border-b px-2">
@@ -882,7 +925,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 fileActions={fileActions}
               />
             ) : (
-              <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>
+              awaitingStatus
             )}
           </Section>
 
@@ -983,7 +1026,7 @@ export function SourceControlPanel(props: SourceControlPanelProps) {
                 }
               />
             ) : (
-              <p className="px-3 py-3 text-muted-foreground text-xs">Loading…</p>
+              awaitingStatus
             )}
           </Section>
         </div>

@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { useAtomValue } from "@effect/atom-react";
+
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -27,6 +29,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
+import { serverEnvironment } from "~/state/server";
 
 import {
   fileName,
@@ -38,6 +41,7 @@ import { useScmContextMenu } from "./useScmContextMenu";
 import { VisualHistoryChart } from "./VisualHistoryChart";
 import { useDelayedFlag, useScmAutoRefresh } from "./useScmAutoRefresh";
 import { useScmDiff, useScmTimeline, type ScmTarget } from "./useSourceControl";
+import { OUTDATED_ENVIRONMENT_MESSAGE } from "./sourceControlError";
 
 const PAGE_SIZE = 100;
 
@@ -56,7 +60,24 @@ type TimelineSelection =
   | { kind: "commit"; path: string; sha: string; subject: string }
   | { kind: "working"; path: string };
 
+/**
+ * A file timeline is `scm.timeline`, so it needs the same environment gate the
+ * Source Control panel does. This surface has its own way in from the Files
+ * panel, which would otherwise reach a server that cannot answer it.
+ */
 export function TimelinePanel(props: TimelinePanelProps) {
+  const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
+  if (serverConfig !== null && serverConfig.environment.capabilities.sourceControlPanel !== true) {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <p className="px-3 py-3 text-foreground text-xs">{OUTDATED_ENVIRONMENT_MESSAGE}</p>
+      </div>
+    );
+  }
+  return <TimelinePanelContent {...props} />;
+}
+
+function TimelinePanelContent(props: TimelinePanelProps) {
   const [limit, setLimit] = useState(PAGE_SIZE);
   const [selection, setSelection] = useState<TimelineSelection | null>(null);
   const { resolvedTheme } = useTheme();

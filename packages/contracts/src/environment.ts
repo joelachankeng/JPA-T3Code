@@ -182,6 +182,11 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       desktop servers whose app predates the remote trigger, where clients
       must keep telling the user to update the app on that machine. */
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Server answers the Source Control surface's `scm.*` requests. Absent on
+      servers that predate the surface, which reject every one of them as an
+      unknown method; the panel reads this once instead of rediscovering it
+      through five failed requests on every refresh. */
+  sourceControlPanel: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

@@ -19,13 +19,13 @@ import type {
   ScmViewInput,
   ScmViewResult,
 } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { useCallback } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { sourceControlPanel } from "~/state/sourceControlPanel";
+import { sourceControlErrorMessage } from "./sourceControlError";
 
 export interface ScmQueryState<A> {
   readonly data: A | null;
@@ -36,9 +36,7 @@ export interface ScmQueryState<A> {
 
 function describe(result: AsyncResult.AsyncResult<unknown, unknown>): string | null {
   if (result._tag !== "Failure") return null;
-  const cause = Cause.squash(result.cause);
-  if (cause instanceof Error) return cause.message;
-  return "The git command failed.";
+  return sourceControlErrorMessage(result.cause);
 }
 
 function useScmQuery<A>(atom: Parameters<typeof useAtomValue>[0]): ScmQueryState<A> {
@@ -162,8 +160,9 @@ export function useScmCommands() {
   };
 }
 
-/** Message for a failed command, matching how the panel reports git's own words. */
-export function commandErrorMessage(cause: unknown): string {
-  if (cause instanceof Error && cause.message) return cause.message;
-  return "The git command failed.";
-}
+/**
+ * Message for a failed command, matching how the panel reports its queries. A
+ * command result carries the whole `Cause`, not the error inside it, so this
+ * cannot read a `message` off what it is handed.
+ */
+export const commandErrorMessage = sourceControlErrorMessage;
