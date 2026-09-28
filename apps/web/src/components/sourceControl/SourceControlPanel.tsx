@@ -10,6 +10,7 @@
  * the panel unmounts whenever another surface is brought forward.
  */
 import { useAtomValue } from "@effect/atom-react";
+import type { FileDiffOptions } from "@pierre/diffs";
 import { FileDiff as PierreFileDiff } from "@pierre/diffs/react";
 import type {
   EnvironmentId,
@@ -51,6 +52,7 @@ import {
 } from "../preview/fileExplorerLabel";
 import { GitLensAccordion } from "./GitLensAccordion";
 import { ScmDiffToolbar } from "./ScmDiffToolbar";
+import { ScmEditableDiff, type ScmEditTarget } from "./ScmEditableDiff";
 import { ScmFileAtRef } from "./ScmFileAtRef";
 import type { ScmFileMenuId } from "./scmMenus";
 import {
@@ -230,6 +232,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   const diffStyle = useClientSettings().diffLayout === "split" ? "split" : "unified";
   const updateClientSettings = useUpdateClientSettings();
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
+  const [savingEdit, setSavingEdit] = useState(false);
   const diffBodyRef = useRef<HTMLDivElement | null>(null);
 
   const status = useScmStatus(target);
@@ -623,9 +626,21 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
     run: runFileAction,
   };
 
+  /**
+   * The repository path the working tree side of this diff writes to, or null
+   * when the diff ends at the index or at a commit and so has no file to edit.
+   */
+  const editablePath = useMemo(() => {
+    if (!selection) return null;
+    if (selection.kind === "working") return selection.staged ? null : selection.entry.path;
+    if (selection.kind === "compare") return selection.path;
+    return null;
+  }, [selection]);
+
   const diffInput: Omit<ScmDiffInput, "cwd"> | null = useMemo(() => {
     if (!selection || selection.kind === "head") return null;
-    // The panel renders patches only, so neither side's full text is fetched.
+    // Whole-file text is fetched only to open the editor; a read-only diff
+    // renders from the patch alone.
     if (selection.kind === "commit") {
       return {
         ...(selection.path ? { path: selection.path } : {}),
@@ -640,7 +655,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
         path: selection.path,
         from: { _tag: "commit", sha: selection.ref },
         to: { _tag: "working" },
-        includeContents: false,
+        includeContents: editablePath !== null,
         ignoreWhitespace,
       };
     }
@@ -649,15 +664,44 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       ...(selection.entry.previousPath ? { previousPath: selection.entry.previousPath } : {}),
       from: selection.staged ? { _tag: "head" } : { _tag: "index" },
       to: selection.staged ? { _tag: "index" } : { _tag: "working" },
-      includeContents: false,
+      includeContents: editablePath !== null,
       ignoreWhitespace,
     };
-  }, [selection, ignoreWhitespace]);
+  }, [selection, ignoreWhitespace, editablePath]);
   const diff = useScmDiff(target, diffInput);
   const renderablePatch = useMemo(
     () => getRenderablePatch(diff.data?.patch, `scm-diff:${resolvedTheme}`),
     [diff.data?.patch, resolvedTheme],
   );
+
+  const diffRenderOptions = useMemo<FileDiffOptions<undefined>>(
+    () => ({
+      collapsed: false,
+      diffStyle,
+      theme: resolveDiffThemeName(resolvedTheme),
+      preferredHighlighter: PREFERRED_HIGHLIGHTER,
+    }),
+    [diffStyle, resolvedTheme],
+  );
+
+  /**
+   * The editor opens only once the whole-file text has arrived and the path
+   * resolves inside the project, which is what the write is relative to.
+   */
+  const editTarget = useMemo<ScmEditTarget | null>(() => {
+    if (editablePath === null || !diff.data || diff.data.binary) return null;
+    const { relative } = workspacePathFor(editablePath, repositoryState?.root ?? null, props.cwd);
+    if (relative === null) return null;
+    return {
+      environmentId: props.environmentId,
+      cwd: props.cwd,
+      relativePath: relative,
+      oldContents: diff.data.oldContents,
+      newContents: diff.data.newContents,
+    };
+    // `workspacePath` reads the repository root from the status query, which
+    // has settled by the time a diff has data.
+  }, [editablePath, diff.data, props.environmentId, props.cwd, repositoryState?.root]);
 
   /**
    * Scroll the diff to the run of changed lines before or after what is on
@@ -777,6 +821,9 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
             </TooltipTrigger>
             <TooltipPopup>{title}</TooltipPopup>
           </Tooltip>
+          {savingEdit ? (
+            <span className="shrink-0 text-[11px] text-muted-foreground">Saving…</span>
+          ) : null}
           {diff.data ? (
             <span className="shrink-0 font-mono text-[11px] tabular-nums">
               <span className="text-success">+{diff.data.insertions}</span>{" "}
@@ -806,18 +853,25 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
           ) : renderablePatch?.kind === "files" ? (
             <div ref={diffBodyRef}>
               <DiffWorkerPoolProvider>
-                {renderablePatch.files.map((fileDiff) => (
-                  <PierreFileDiff
-                    key={resolveFileDiffPath(fileDiff)}
-                    fileDiff={fileDiff}
-                    options={{
-                      collapsed: false,
-                      diffStyle,
-                      theme: resolveDiffThemeName(resolvedTheme),
-                      preferredHighlighter: PREFERRED_HIGHLIGHTER,
-                    }}
+                {editTarget ? (
+                  <ScmEditableDiff
+                    // Remounting starts a fresh edit session, which is what a
+                    // different file or a different patch calls for.
+                    key={`${editTarget.relativePath}:${ignoreWhitespace}`}
+                    files={renderablePatch.files}
+                    options={diffRenderOptions}
+                    target={editTarget}
+                    onPendingChange={setSavingEdit}
                   />
-                ))}
+                ) : (
+                  renderablePatch.files.map((fileDiff) => (
+                    <PierreFileDiff
+                      key={resolveFileDiffPath(fileDiff)}
+                      fileDiff={fileDiff}
+                      options={diffRenderOptions}
+                    />
+                  ))
+                )}
               </DiffWorkerPoolProvider>
             </div>
           ) : renderablePatch?.kind === "raw" ? (

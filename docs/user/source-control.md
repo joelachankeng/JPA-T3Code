@@ -116,8 +116,13 @@ commits are waiting in each direction. On a branch that has no upstream yet, it 
 
 An open diff carries its own controls at the right of its header: open the file itself, step to the
 previous or next change, and ignore whitespace, which hides differences that are only spacing. The
-last pair switches between reading the change in one column and reading the two versions side by
+last control switches between reading the change in one column and reading the two versions side by
 side; that choice is the same diff layout the chat diff panel and pull request reviews use.
+
+You can also type directly into a diff of your working tree, on the side that shows the current
+file. Edits save on their own a moment after you stop typing, and the header shows **Saving…**
+while a write is in flight. A diff of staged changes or of a commit is a record of what happened,
+so it stays read-only.
 
 ## File timelines
 
