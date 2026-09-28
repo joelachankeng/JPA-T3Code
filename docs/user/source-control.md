@@ -114,6 +114,11 @@ on the remote's website, reveal it in the Files surface or your file manager, an
 The button beside the branch name in the header syncs with the upstream branch and shows how many
 commits are waiting in each direction. On a branch that has no upstream yet, it publishes the branch.
 
+An open diff carries its own controls at the right of its header: open the file itself, step to the
+previous or next change, and ignore whitespace, which hides differences that are only spacing. The
+last pair switches between reading the change in one column and reading the two versions side by
+side; that choice is the same diff layout the chat diff panel and pull request reviews use.
+
 ## File timelines
 
 Right-click a file in either the **Files** or the **Source control** surface and choose

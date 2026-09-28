@@ -536,3 +536,36 @@ export function workspacePathFor(
     ? { relative: repoPath.slice(prefix.length + 1), absolute }
     : { relative: null, absolute };
 }
+
+/**
+ * Positions of the first row of each run of changed lines in one rendered
+ * file, for the diff toolbar's previous/next controls.
+ *
+ * `rawIndices` are the diff renderer's `data-line-index` attributes for that
+ * file's changed rows. Each is `"<unified>,<split>"`, and only the column
+ * belonging to the layout on screen counts a rendered row. Split view emits
+ * the deletion column and then the addition column, so DOM order walks the
+ * file twice; sorting on that column puts the rows back in reading order and
+ * collapses the two halves of one row onto a single index.
+ */
+export function changeBlockAnchors(
+  rawIndices: ReadonlyArray<string>,
+  diffStyle: "unified" | "split",
+): number[] {
+  const column = diffStyle === "split" ? 1 : 0;
+  const rows = rawIndices
+    .map((raw, position) => ({
+      position,
+      index: Number.parseInt(raw.split(",")[column] ?? "", 10),
+    }))
+    .filter((row) => !Number.isNaN(row.index))
+    .sort((a, b) => a.index - b.index || a.position - b.position);
+
+  const anchors: number[] = [];
+  let previous: number | null = null;
+  for (const row of rows) {
+    if (previous === null || row.index > previous + 1) anchors.push(row.position);
+    previous = row.index;
+  }
+  return anchors;
+}

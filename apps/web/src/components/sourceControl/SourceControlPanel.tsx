@@ -35,6 +35,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
@@ -49,6 +50,7 @@ import {
   revealInFileExplorerLabelForOs,
 } from "../preview/fileExplorerLabel";
 import { GitLensAccordion } from "./GitLensAccordion";
+import { ScmDiffToolbar } from "./ScmDiffToolbar";
 import { ScmFileAtRef } from "./ScmFileAtRef";
 import type { ScmFileMenuId } from "./scmMenus";
 import {
@@ -60,6 +62,7 @@ import {
 import { ScmRefPickerDialog, type ScmRefPickerKind } from "./ScmRefPickerDialog";
 import { SourceControlGraph } from "./SourceControlGraph";
 import {
+  changeBlockAnchors,
   fileName,
   headPathOf,
   refOnRemote,
@@ -220,6 +223,14 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   const [busy, setBusy] = useState(false);
   const [graphLimit, setGraphLimit] = useState(GRAPH_PAGE_SIZE);
   const [selection, setSelection] = useState<DiffSelection | null>(null);
+  // Side-by-side is the shared diff preference, so the toolbar toggle here
+  // moves the same switch the chat diff panel and the pull request code tab
+  // read. Whitespace stays local and starts off, because git shows whitespace
+  // by default and this panel is where a commit gets reviewed.
+  const diffStyle = useClientSettings().diffLayout === "split" ? "split" : "unified";
+  const updateClientSettings = useUpdateClientSettings();
+  const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
+  const diffBodyRef = useRef<HTMLDivElement | null>(null);
 
   const status = useScmStatus(target);
   const log = useScmLog(target, {
@@ -621,6 +632,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
         from: { _tag: "commitParent", sha: selection.sha },
         to: { _tag: "commit", sha: selection.sha },
         includeContents: false,
+        ignoreWhitespace,
       };
     }
     if (selection.kind === "compare") {
@@ -629,6 +641,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
         from: { _tag: "commit", sha: selection.ref },
         to: { _tag: "working" },
         includeContents: false,
+        ignoreWhitespace,
       };
     }
     return {
@@ -637,13 +650,65 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       from: selection.staged ? { _tag: "head" } : { _tag: "index" },
       to: selection.staged ? { _tag: "index" } : { _tag: "working" },
       includeContents: false,
+      ignoreWhitespace,
     };
-  }, [selection]);
+  }, [selection, ignoreWhitespace]);
   const diff = useScmDiff(target, diffInput);
   const renderablePatch = useMemo(
     () => getRenderablePatch(diff.data?.patch, `scm-diff:${resolvedTheme}`),
     [diff.data?.patch, resolvedTheme],
   );
+
+  /**
+   * Scroll the diff to the run of changed lines before or after what is on
+   * screen, wrapping at either end as VS Code's F7 does. The position of the
+   * viewport decides where to go from, rather than a counter, so the buttons
+   * stay honest after the reader scrolls by hand.
+   */
+  const goToChange = (direction: "previous" | "next") => {
+    const body = diffBodyRef.current;
+    const viewport = body?.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
+    if (!body || !viewport) return;
+    // The diff renderer mounts each file's rows in its own shadow root, so a
+    // query on the panel's own tree finds nothing. Each root is grouped on its
+    // own because rendered row numbers restart per file, and the hosts come
+    // back in document order, which keeps the files in reading order.
+    const hosts = [...body.querySelectorAll<HTMLElement>("*")].filter((node) => node.shadowRoot);
+    const roots: ReadonlyArray<ParentNode> =
+      hosts.length > 0 ? hosts.map((host) => host.shadowRoot as ShadowRoot) : [body];
+    const anchors = roots.flatMap((root) => {
+      const rows = [
+        ...root.querySelectorAll<HTMLElement>("[data-line-type^='change-'][data-line-index]"),
+      ];
+      return changeBlockAnchors(
+        rows.map((row) => row.dataset.lineIndex ?? ""),
+        diffStyle,
+      ).map((position) => rows[position]);
+    });
+    if (anchors.length === 0) return;
+
+    // Compare resting places rather than raw row positions: a change already
+    // near the top resolves to the scroll the viewport is at, and stepping
+    // would otherwise sit on it forever once the offset clamps to zero.
+    const edge = viewport.getBoundingClientRect().top;
+    const furthest = viewport.scrollHeight - viewport.clientHeight;
+    // Keep a little of the preceding context above the change being revealed.
+    const lead = Math.min(120, viewport.clientHeight / 4);
+    const stops = anchors.map((anchor) => {
+      const offset = (anchor?.getBoundingClientRect().top ?? 0) - edge;
+      return Math.max(0, Math.min(furthest, viewport.scrollTop + offset - lead));
+    });
+    const resting = viewport.scrollTop;
+    const found =
+      direction === "next"
+        ? stops.findIndex((stop) => stop > resting + 1)
+        : stops.reduce((last, stop, index) => (stop < resting - 1 ? index : last), -1);
+    const stop = stops[found === -1 ? (direction === "next" ? 0 : stops.length - 1) : found];
+    if (stop === undefined) return;
+    // Scroll the viewport itself rather than scrollIntoView, which would also
+    // move every scrollable ancestor the panel happens to sit in.
+    viewport.scrollTop = stop;
+  };
 
   if (status.data && !status.data.repository.isRepo) {
     return (
@@ -718,6 +783,18 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
               <span className="text-destructive-foreground">−{diff.data.deletions}</span>
             </span>
           ) : null}
+          <ScmDiffToolbar
+            hasChanges={(diff.data?.insertions ?? 0) + (diff.data?.deletions ?? 0) > 0}
+            diffStyle={diffStyle}
+            ignoreWhitespace={ignoreWhitespace}
+            openFilePath={selection.kind === "working" ? selection.entry.path : selection.path}
+            onOpenFile={openFile}
+            onGoToChange={goToChange}
+            onIgnoreWhitespaceChange={setIgnoreWhitespace}
+            onDiffStyleChange={(next) =>
+              updateClientSettings({ diffLayout: next === "split" ? "split" : "stacked" })
+            }
+          />
         </header>
         <ScrollArea className="min-h-0 flex-1">
           {diff.error ? (
@@ -727,20 +804,22 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
               This file is binary, so there is no text diff to show.
             </p>
           ) : renderablePatch?.kind === "files" ? (
-            <DiffWorkerPoolProvider>
-              {renderablePatch.files.map((fileDiff) => (
-                <PierreFileDiff
-                  key={resolveFileDiffPath(fileDiff)}
-                  fileDiff={fileDiff}
-                  options={{
-                    collapsed: false,
-                    diffStyle: "unified",
-                    theme: resolveDiffThemeName(resolvedTheme),
-                    preferredHighlighter: PREFERRED_HIGHLIGHTER,
-                  }}
-                />
-              ))}
-            </DiffWorkerPoolProvider>
+            <div ref={diffBodyRef}>
+              <DiffWorkerPoolProvider>
+                {renderablePatch.files.map((fileDiff) => (
+                  <PierreFileDiff
+                    key={resolveFileDiffPath(fileDiff)}
+                    fileDiff={fileDiff}
+                    options={{
+                      collapsed: false,
+                      diffStyle,
+                      theme: resolveDiffThemeName(resolvedTheme),
+                      preferredHighlighter: PREFERRED_HIGHLIGHTER,
+                    }}
+                  />
+                ))}
+              </DiffWorkerPoolProvider>
+            </div>
           ) : renderablePatch?.kind === "raw" ? (
             <pre className="overflow-x-auto p-2 text-xs">{renderablePatch.text}</pre>
           ) : (

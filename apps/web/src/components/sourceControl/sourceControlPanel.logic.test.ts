@@ -6,6 +6,7 @@ import {
   buildListRows,
   buildTreeRows,
   canOpenFile,
+  changeBlockAnchors,
   commitButtonLabel,
   commitDisabledReason,
   folderToneClassName,
@@ -462,5 +463,40 @@ describe("workspacePathFor", () => {
     expect(workspacePathFor("a.ts", "C:\\Repo\\T3", "C:\\Repo\\T3").absolute).toBe(
       "C:\\Repo\\T3\\a.ts",
     );
+  });
+});
+
+describe("changeBlockAnchors", () => {
+  it("starts a block wherever context interrupts the changed rows", () => {
+    // Unified rows 2-3 and 7 changed, with context between them.
+    expect(changeBlockAnchors(["2,2", "3,3", "7,6"], "unified")).toEqual([0, 2]);
+  });
+
+  it("keeps a run going across consecutive rows", () => {
+    expect(changeBlockAnchors(["4,4", "5,5", "6,6"], "unified")).toEqual([0]);
+  });
+
+  it("counts a side-by-side row once when both halves changed", () => {
+    // Split view renders the deletion column and then the addition column, so
+    // the same four rendered rows arrive as two passes sharing split indices.
+    const deletionsThenAdditions = ["10,4", "11,5", "20,4", "21,5"];
+    expect(changeBlockAnchors(deletionsThenAdditions, "split")).toEqual([0]);
+  });
+
+  it("finds the run in the second column when the first has no deletions", () => {
+    expect(changeBlockAnchors(["30,7", "31,8"], "split")).toEqual([0]);
+  });
+
+  it("separates split runs the columns interleave", () => {
+    // Deletions on rendered rows 2 and 9, additions on 3 and 10: two runs.
+    expect(changeBlockAnchors(["40,2", "41,9", "50,3", "51,10"], "split")).toEqual([0, 1]);
+  });
+
+  it("ignores rows whose index attribute is unusable", () => {
+    expect(changeBlockAnchors(["", "3,3", "nope"], "unified")).toEqual([1]);
+  });
+
+  it("has no anchors when nothing changed", () => {
+    expect(changeBlockAnchors([], "unified")).toEqual([]);
   });
 });
