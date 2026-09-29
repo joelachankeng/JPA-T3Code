@@ -17,6 +17,9 @@ import { resolveFileDiffPath } from "~/lib/diffRendering";
 import { projectEnvironment } from "~/state/projects";
 import { useAtomCommand } from "~/state/use-atom-command";
 
+/** Distinguishes one edit session's document from the next one's. */
+let sessionCount = 0;
+
 /** Where an edit lands, and the two sides the editor opens against. */
 export type ScmEditTarget = {
   readonly environmentId: EnvironmentId;
@@ -31,6 +34,8 @@ export type ScmEditTarget = {
 export type ScmEditSession = {
   /** Writes the buffer. Resolves false when the write failed. */
   readonly save: () => Promise<boolean>;
+  /** Puts the text back to what was last written to the file. */
+  readonly revert: () => void;
 };
 
 type ScmEditableDiffProps = {
@@ -62,9 +67,12 @@ export function ScmEditableDiff({
     newFile: {
       name: target.relativePath,
       contents: target.newContents,
-      // An editable file needs a stable cacheKey: it identifies the document
-      // Pierre keeps across renders.
-      cacheKey: `scm-edit:${target.environmentId}:${target.cwd}:${target.relativePath}`,
+      // The cacheKey identifies the document Pierre keeps across renders, and
+      // it carries the session count because a key reused after a remount
+      // hands the previous document back. Discarding depends on that not
+      // happening: it reopens the file and would otherwise restore the very
+      // edits it was asked to throw away.
+      cacheKey: `scm-edit:${target.environmentId}:${target.cwd}:${target.relativePath}:${(sessionCount += 1)}`,
     },
   }));
 
@@ -115,10 +123,30 @@ export function ScmEditableDiff({
     }
   }, [cwd, environmentId, onSavingChange, relativePath, writeFile]);
 
+  // Reverting goes through the editor rather than by rebuilding it: the
+  // renderer hands a recycled instance its previous document back, so a
+  // remount would restore the very edits being thrown away. Replacing the
+  // whole range also leaves the change on the undo timeline.
+  const revert = useCallback(() => {
+    const current = editor.getText();
+    const target = session.buffer.saved;
+    if (current === target) return;
+    const lines = current.split("\n");
+    editor.applyEdits([
+      {
+        range: {
+          start: { line: 0, character: 0 },
+          end: { line: lines.length - 1, character: (lines[lines.length - 1] ?? "").length },
+        },
+        newText: target,
+      },
+    ]);
+  }, [editor, session]);
+
   useEffect(() => {
-    onSession({ save });
+    onSession({ save, revert });
     return () => onSession(null);
-  }, [onSession, save]);
+  }, [onSession, revert, save]);
 
   // Editing needs both whole files, not just the hunks the patch carries.
   const loadDiffFiles = useMemo<FileDiffContentsLoader>(

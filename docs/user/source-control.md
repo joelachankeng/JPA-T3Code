@@ -115,9 +115,10 @@ The button beside the branch name in the header syncs with the upstream branch a
 commits are waiting in each direction. On a branch that has no upstream yet, it publishes the branch.
 
 An open diff carries its own controls at the right of its header: open the file itself, step to the
-previous or next change, and ignore whitespace, which hides differences that are only spacing. The
-last control switches between reading the change in one column and reading the two versions side by
-side; that choice is the same diff layout the chat diff panel and pull request reviews use.
+previous or next change, ignore whitespace, which hides differences that are only spacing, and wrap
+long lines instead of scrolling them. The last control switches between reading the change in one
+column and reading the two versions side by side. Wrapping and the column choice are the same
+settings the chat diff panel and pull request reviews use.
 
 You can also type directly into a diff of your working tree, on the side that shows the current
 file. Nothing is written until you say so: once you type, a save and a discard control appear

@@ -4,7 +4,15 @@
  * VS Code diff editor's title bar, minus the actions that only make sense
  * when there is an editor area to open a second tab in.
  */
-import { ArrowDown, ArrowUp, Columns2Icon, FileText, PilcrowIcon, Rows3Icon } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  Columns2Icon,
+  FileText,
+  PilcrowIcon,
+  Rows3Icon,
+  TextWrapIcon,
+} from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Toggle } from "~/components/ui/toggle-group";
@@ -15,11 +23,13 @@ type ScmDiffToolbarProps = {
   readonly hasChanges: boolean;
   readonly diffStyle: "unified" | "split";
   readonly ignoreWhitespace: boolean;
+  readonly wordWrap: boolean;
   /** Null for a whole-commit diff, which has no single file to open. */
   readonly openFilePath: string | null;
   readonly onOpenFile: (path: string) => void;
   readonly onGoToChange: (direction: "previous" | "next") => void;
   readonly onIgnoreWhitespaceChange: (ignore: boolean) => void;
+  readonly onWordWrapChange: (wrap: boolean) => void;
   readonly onDiffStyleChange: (style: "unified" | "split") => void;
 };
 
@@ -103,6 +113,24 @@ export function ScmDiffToolbar(props: ScmDiffToolbarProps) {
         </TooltipTrigger>
         <TooltipPopup side="bottom">
           {props.ignoreWhitespace ? "Show whitespace differences" : "Ignore whitespace differences"}
+        </TooltipPopup>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Toggle
+              variant="ghost"
+              size="xs"
+              aria-label={props.wordWrap ? "Stop wrapping long lines" : "Wrap long lines"}
+              pressed={props.wordWrap}
+              onPressedChange={(pressed) => props.onWordWrapChange(Boolean(pressed))}
+            />
+          }
+        >
+          <TextWrapIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="bottom">
+          {props.wordWrap ? "Stop wrapping long lines" : "Wrap long lines"}
         </TooltipPopup>
       </Tooltip>
       <Tooltip>

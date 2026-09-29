@@ -234,14 +234,13 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   // moves the same switch the chat diff panel and the pull request code tab
   // read. Whitespace stays local and starts off, because git shows whitespace
   // by default and this panel is where a commit gets reviewed.
-  const diffStyle = useClientSettings().diffLayout === "split" ? "split" : "unified";
+  const clientSettings = useClientSettings();
+  const diffStyle = clientSettings.diffLayout === "split" ? "split" : "unified";
+  const wordWrap = clientSettings.wordWrap;
   const updateClientSettings = useUpdateClientSettings();
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [dirtyEdit, setDirtyEdit] = useState(false);
-  // Bumped to remount the editor, which reopens it against the file as it now
-  // stands. That is what clearing does, and what a save needs afterwards.
-  const [editGeneration, setEditGeneration] = useState(0);
   const editSessionRef = useRef<ScmEditSession | null>(null);
   const diffBodyRef = useRef<HTMLDivElement | null>(null);
 
@@ -567,9 +566,9 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       const confirmed = await requestConfirmDialog(prompt, { variant: "destructive" });
       if (!confirmed) return;
     }
-    setScmDiffUnsaved(false);
-    setDirtyEdit(false);
-    setEditGeneration((generation) => generation + 1);
+    // The editor reports the buffer matching the file again, which is what
+    // takes the two controls away.
+    editSessionRef.current?.revert();
   };
 
   const openFile = (repoPath: string) => {
@@ -738,10 +737,11 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
     () => ({
       collapsed: false,
       diffStyle,
+      overflow: wordWrap ? ("wrap" as const) : ("scroll" as const),
       theme: resolveDiffThemeName(resolvedTheme),
       preferredHighlighter: PREFERRED_HIGHLIGHTER,
     }),
-    [diffStyle, resolvedTheme],
+    [diffStyle, resolvedTheme, wordWrap],
   );
 
   /**
@@ -897,9 +897,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
             <ArrowLeft className="size-3.5" />
           </Button>
           <Tooltip>
-            <TooltipTrigger
-              render={<span className="min-w-0 flex-1 truncate text-foreground text-xs" />}
-            >
+            <TooltipTrigger render={<span className="min-w-0 truncate text-foreground text-xs" />}>
               {title}
             </TooltipTrigger>
             <TooltipPopup>{title}</TooltipPopup>
@@ -945,6 +943,9 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
           {savingEdit ? (
             <span className="shrink-0 text-[11px] text-muted-foreground">Saving…</span>
           ) : null}
+          {/* Takes the slack the title used to, so saving and discarding stay
+              against the file's name while the rest keeps to the right. */}
+          <span className="min-w-0 flex-1" />
           {/* A working tree diff that cannot be typed into looks broken rather
               than restricted, so the one case that reaches it says why. */}
           {editablePath !== null && editTarget === null && diff.data && !diff.data.binary ? (
@@ -968,11 +969,13 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
           <ScmDiffToolbar
             hasChanges={(diff.data?.insertions ?? 0) + (diff.data?.deletions ?? 0) > 0}
             diffStyle={diffStyle}
+            wordWrap={wordWrap}
             ignoreWhitespace={ignoreWhitespace}
             openFilePath={selection.kind === "working" ? selection.entry.path : selection.path}
             onOpenFile={openFile}
             onGoToChange={goToChange}
             onIgnoreWhitespaceChange={setIgnoreWhitespace}
+            onWordWrapChange={(next) => updateClientSettings({ wordWrap: next })}
             onDiffStyleChange={(next) =>
               updateClientSettings({ diffLayout: next === "split" ? "split" : "stacked" })
             }
@@ -990,10 +993,9 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
               <DiffWorkerPoolProvider>
                 {editTarget ? (
                   <ScmEditableDiff
-                    // Remounting starts a fresh edit session, which is what a
-                    // different file, a different patch, and clearing all ask
-                    // for.
-                    key={`${editTarget.relativePath}:${ignoreWhitespace}:${editGeneration}`}
+                    // A different file or patch is a different document, so
+                    // it opens a fresh edit session.
+                    key={`${editTarget.relativePath}:${ignoreWhitespace}`}
                     files={renderablePatch.files}
                     options={diffRenderOptions}
                     target={editTarget}
