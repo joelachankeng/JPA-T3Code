@@ -102,8 +102,8 @@ The surface has three sections:
   tracked change. Group headers carry stage, unstage, and discard for a whole group, and the toolbar
   switches the list between a flat list and a folder tree.
 - **Graph** draws the commit history, with a lane per line of development and chips for the branches
-  and tags pointing at each commit. Select a commit to see everything it changed. The filter at the
-  top switches between the current branch and all branches.
+  and tags pointing at each commit. Select a commit to see everything it changed, or right-click it
+  to copy its message. The filter at the top switches between the current branch and all branches.
 
 Right-click a changed file or, in the folder tree, a folder for the same menu VS Code offers: stage,
 unstage, discard or stash it, add it to `.gitignore`, copy its changes as a patch, compare it with an
@@ -120,9 +120,10 @@ last control switches between reading the change in one column and reading the t
 side; that choice is the same diff layout the chat diff panel and pull request reviews use.
 
 You can also type directly into a diff of your working tree, on the side that shows the current
-file. Edits save on their own a moment after you stop typing, and the header shows **Saving…**
-while a write is in flight. A diff of staged changes or of a commit is a record of what happened,
-so it stays read-only.
+file. Nothing is written until you say so: once you type, a save and a discard control appear
+beside the file's name, and `Ctrl`/`Cmd`+`S` saves as well. Discarding, leaving the diff, or
+closing the panel with unsaved changes asks first. A diff of staged changes or of a commit is a
+record of what happened, so it stays read-only, as is a file that lives outside the project.
 
 ## File timelines
 

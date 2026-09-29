@@ -230,6 +230,8 @@ import {
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { deepActiveElement, isEditableFocused } from "../lib/editableFocus";
+import { requestConfirmDialog } from "../confirmDialog";
+import { scmDiffDiscardPrompt } from "./sourceControl/scmDiffEdits";
 import ThreadTerminalDrawer from "./ThreadTerminalDrawer";
 import {
   AlarmClockIcon,
@@ -5154,6 +5156,19 @@ export default function ChatView(props: ChatViewProps) {
       const finishClose = () => finishRightPanelSurfaceClose([surface]);
       if (surface.kind === "preview") {
         closeAfterAgentBrowserConfirmation([surface], finishClose);
+        return;
+      }
+      // Closing source control takes its open diff with it, so edits that were
+      // never written would go silently.
+      if (surface.kind === "source-control") {
+        const prompt = scmDiffDiscardPrompt();
+        if (!prompt) {
+          finishClose();
+          return;
+        }
+        void requestConfirmDialog(prompt, { variant: "destructive" })?.then((confirmed) => {
+          if (confirmed) finishClose();
+        });
         return;
       }
       if (surface.kind !== "terminal") {

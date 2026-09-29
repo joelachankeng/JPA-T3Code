@@ -15,6 +15,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
+import { useScmContextMenu } from "./useScmContextMenu";
 import {
   buildGraphRows,
   formatScmAbsoluteTime,
@@ -181,9 +182,12 @@ export interface SourceControlGraphProps {
   /** When set, the graph shows only commits touching this path. */
   readonly pathFilter: string | null;
   readonly onClearPathFilter: () => void;
+  /** Copies the commit's full message, subject and body. */
+  readonly onCopyCommitMessage: (commit: ScmCommit) => void;
 }
 
 export function SourceControlGraph(props: SourceControlGraphProps) {
+  const showContextMenu = useScmContextMenu();
   const commits = props.log?.commits ?? [];
   const rows = useMemo(() => buildGraphRows(commits), [commits]);
   const width = useMemo(() => graphWidth(rows), [rows]);
@@ -274,6 +278,15 @@ export function SourceControlGraph(props: SourceControlGraphProps) {
                       )}
                       style={{ height: ROW_HEIGHT }}
                       onClick={() => props.onSelectCommit(commit)}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        void showContextMenu(
+                          [{ id: "copy-message", label: "Copy Commit Message" }] as const,
+                          { x: event.clientX, y: event.clientY },
+                        ).then((clicked) => {
+                          if (clicked === "copy-message") props.onCopyCommitMessage(commit);
+                        });
+                      }}
                     />
                   }
                 >

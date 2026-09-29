@@ -8,6 +8,7 @@ import {
   canOpenFile,
   changeBlockAnchors,
   commitButtonLabel,
+  commitMessage,
   commitDisabledReason,
   folderToneClassName,
   formatScmRelativeTime,
@@ -449,6 +450,22 @@ describe("workspacePathFor", () => {
     );
   });
 
+  // The diff editor writes through the project, so this decides whether a
+  // changed file can be edited at all. Git reports the repository root with
+  // forward slashes while the project directory arrives with the host's own
+  // separators, so the two sides are compared in normalized form.
+  it("resolves a file inside the project when the project is a subdirectory", () => {
+    expect(
+      workspacePathFor("apps/server/test.txt", "C:/Repo/T3", "C:\\Repo\\T3\\apps\\server").relative,
+    ).toBe("test.txt");
+  });
+
+  it("has no project path for a repository file above the project directory", () => {
+    expect(workspacePathFor("test.txt", "C:/Repo/T3", "C:\\Repo\\T3\\apps\\server").relative).toBe(
+      null,
+    );
+  });
+
   it("names a file outside the project absolutely", () => {
     expect(workspacePathFor("apps/web/x.ts", "/repo", "/repo/apps/server")).toEqual({
       relative: null,
@@ -498,5 +515,25 @@ describe("changeBlockAnchors", () => {
 
   it("has no anchors when nothing changed", () => {
     expect(changeBlockAnchors([], "unified")).toEqual([]);
+  });
+});
+
+describe("commitMessage", () => {
+  it("joins the subject and body the way git wrote them", () => {
+    expect(
+      commitMessage({ subject: "fix(web): stop the flicker", body: "The cause was X.\n" }),
+    ).toBe("fix(web): stop the flicker\n\nThe cause was X.");
+  });
+
+  it("is just the subject when there is no body", () => {
+    expect(commitMessage({ subject: "chore: bump deps", body: "" })).toBe("chore: bump deps");
+  });
+
+  it("drops the padding git leaves after the body", () => {
+    expect(commitMessage({ subject: "s", body: "body\n\n\n" })).toBe("s\n\nbody");
+  });
+
+  it("returns the body alone for a commit with no subject", () => {
+    expect(commitMessage({ subject: "   ", body: "orphan body" })).toBe("orphan body");
   });
 });

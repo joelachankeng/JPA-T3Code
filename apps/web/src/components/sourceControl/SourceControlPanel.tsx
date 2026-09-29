@@ -26,8 +26,10 @@ import {
   CloudUpload,
   RefreshCw,
   RotateCw,
+  Save,
+  Undo2,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { Button } from "~/components/ui/button";
@@ -40,6 +42,7 @@ import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings"
 import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
+import { deepActiveElement, isEditableFocused } from "~/lib/editableFocus";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import { serverEnvironment } from "~/state/server";
@@ -52,7 +55,8 @@ import {
 } from "../preview/fileExplorerLabel";
 import { GitLensAccordion } from "./GitLensAccordion";
 import { ScmDiffToolbar } from "./ScmDiffToolbar";
-import { ScmEditableDiff, type ScmEditTarget } from "./ScmEditableDiff";
+import { ScmEditableDiff, type ScmEditSession, type ScmEditTarget } from "./ScmEditableDiff";
+import { scmDiffDiscardPrompt, setScmDiffUnsaved } from "./scmDiffEdits";
 import { ScmFileAtRef } from "./ScmFileAtRef";
 import type { ScmFileMenuId } from "./scmMenus";
 import {
@@ -65,6 +69,7 @@ import { ScmRefPickerDialog, type ScmRefPickerKind } from "./ScmRefPickerDialog"
 import { SourceControlGraph } from "./SourceControlGraph";
 import {
   changeBlockAnchors,
+  commitMessage,
   fileName,
   headPathOf,
   refOnRemote,
@@ -233,6 +238,11 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   const updateClientSettings = useUpdateClientSettings();
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
+  const [dirtyEdit, setDirtyEdit] = useState(false);
+  // Bumped to remount the editor, which reopens it against the file as it now
+  // stands. That is what clearing does, and what a save needs afterwards.
+  const [editGeneration, setEditGeneration] = useState(0);
+  const editSessionRef = useRef<ScmEditSession | null>(null);
   const diffBodyRef = useRef<HTMLDivElement | null>(null);
 
   const status = useScmStatus(target);
@@ -513,6 +523,55 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   const workspacePath = (repoPath: string) =>
     workspacePathFor(repoPath, repositoryState?.root ?? null, props.cwd);
 
+  // The panel mirrors the editor's dirty flag into the module the chat view
+  // reads, because the control that closes this panel lives over there.
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    setDirtyEdit(dirty);
+    setScmDiffUnsaved(dirty);
+  }, []);
+  const handleEditSession = useCallback((session: ScmEditSession | null) => {
+    editSessionRef.current = session;
+  }, []);
+
+  // Leaving the surface behind must not leave the chat view thinking a diff
+  // still holds edits.
+  useEffect(() => () => setScmDiffUnsaved(false), []);
+
+  /**
+   * Every route out of an open diff goes through here, so unsaved edits are
+   * asked about once, wherever the reader is leaving from.
+   */
+  const changeSelection = async (next: DiffSelection | null) => {
+    const prompt = scmDiffDiscardPrompt();
+    if (prompt) {
+      const confirmed = await requestConfirmDialog(prompt, { variant: "destructive" });
+      if (!confirmed) return;
+    }
+    setScmDiffUnsaved(false);
+    setDirtyEdit(false);
+    setSelection(next);
+  };
+
+  const saveEdit = async () => {
+    const saved = await editSessionRef.current?.save();
+    if (saved !== true) return;
+    // The editor reports its own dirty state back, so nothing is forced here;
+    // it stays mounted, which is what keeps the caret where it was. Only the
+    // patch needs re-reading, for the header's counts.
+    diff.refresh();
+  };
+
+  const clearEdit = async () => {
+    const prompt = scmDiffDiscardPrompt();
+    if (prompt) {
+      const confirmed = await requestConfirmDialog(prompt, { variant: "destructive" });
+      if (!confirmed) return;
+    }
+    setScmDiffUnsaved(false);
+    setDirtyEdit(false);
+    setEditGeneration((generation) => generation + 1);
+  };
+
   const openFile = (repoPath: string) => {
     const { relative } = workspacePath(repoPath);
     if (relative !== null) props.onOpenFile(relative);
@@ -579,7 +638,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       case "compare-ref":
         return setPicker({ kind: "ref", path: entry.path, purpose: "compare" });
       case "open-head":
-        return setSelection({ kind: "head", path: headPath });
+        return void changeSelection({ kind: "head", path: headPath });
       case "remote-open":
         return shareRemote(headPath, "open");
       case "remote-copy":
@@ -669,9 +728,10 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
     };
   }, [selection, ignoreWhitespace, editablePath]);
   const diff = useScmDiff(target, diffInput);
+  const patch = diff.data?.patch;
   const renderablePatch = useMemo(
-    () => getRenderablePatch(diff.data?.patch, `scm-diff:${resolvedTheme}`),
-    [diff.data?.patch, resolvedTheme],
+    () => getRenderablePatch(patch, `scm-diff:${resolvedTheme}`),
+    [patch, resolvedTheme],
   );
 
   const diffRenderOptions = useMemo<FileDiffOptions<undefined>>(
@@ -702,6 +762,29 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
     // `workspacePath` reads the repository root from the status query, which
     // has settled by the time a diff has data.
   }, [editablePath, diff.data, props.environmentId, props.cwd, repositoryState?.root]);
+
+  // Save on the chord every editor uses. Claimed only while the caret sits in
+  // this diff, so the browser's own Save Page keeps working everywhere else.
+  // `document.activeElement` stops at the renderer's shadow host, which is the
+  // node inside the diff body; the caret itself is one level further in.
+  const saveEditRef = useRef(saveEdit);
+  useEffect(() => {
+    saveEditRef.current = saveEdit;
+  });
+  useEffect(() => {
+    if (!dirtyEdit) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "s" || !(event.metaKey || event.ctrlKey) || event.altKey) return;
+      const body = diffBodyRef.current;
+      const host = document.activeElement;
+      if (!body || !host || !body.contains(host)) return;
+      if (!isEditableFocused(deepActiveElement())) return;
+      event.preventDefault();
+      void saveEditRef.current();
+    };
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [dirtyEdit]);
 
   /**
    * Scroll the diff to the run of changed lines before or after what is on
@@ -774,7 +857,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
             variant="ghost-muted"
             size="icon-xs"
             aria-label="Back to source control"
-            onClick={() => setSelection(null)}
+            onClick={() => void changeSelection(null)}
           >
             <ArrowLeft className="size-3.5" />
           </Button>
@@ -809,7 +892,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
             variant="ghost-muted"
             size="icon-xs"
             aria-label="Back to source control"
-            onClick={() => setSelection(null)}
+            onClick={() => void changeSelection(null)}
           >
             <ArrowLeft className="size-3.5" />
           </Button>
@@ -821,8 +904,60 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
             </TooltipTrigger>
             <TooltipPopup>{title}</TooltipPopup>
           </Tooltip>
+          {dirtyEdit ? (
+            <span className="flex shrink-0 items-center gap-0.5">
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost-muted"
+                      size="icon-xs"
+                      aria-label="Save changes"
+                      disabled={savingEdit}
+                      onClick={() => void saveEdit()}
+                    />
+                  }
+                >
+                  <Save className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">Save changes</TooltipPopup>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost-muted"
+                      size="icon-xs"
+                      aria-label="Discard unsaved changes"
+                      disabled={savingEdit}
+                      onClick={() => void clearEdit()}
+                    />
+                  }
+                >
+                  <Undo2 className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="bottom">Discard unsaved changes</TooltipPopup>
+              </Tooltip>
+            </span>
+          ) : null}
           {savingEdit ? (
             <span className="shrink-0 text-[11px] text-muted-foreground">Saving…</span>
+          ) : null}
+          {/* A working tree diff that cannot be typed into looks broken rather
+              than restricted, so the one case that reaches it says why. */}
+          {editablePath !== null && editTarget === null && diff.data && !diff.data.binary ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={<span className="shrink-0 text-[11px] text-muted-foreground" />}
+              >
+                Read-only
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">
+                This file is outside {props.projectName}, so it cannot be edited here.
+              </TooltipPopup>
+            </Tooltip>
           ) : null}
           {diff.data ? (
             <span className="shrink-0 font-mono text-[11px] tabular-nums">
@@ -856,12 +991,15 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
                 {editTarget ? (
                   <ScmEditableDiff
                     // Remounting starts a fresh edit session, which is what a
-                    // different file or a different patch calls for.
-                    key={`${editTarget.relativePath}:${ignoreWhitespace}`}
+                    // different file, a different patch, and clearing all ask
+                    // for.
+                    key={`${editTarget.relativePath}:${ignoreWhitespace}:${editGeneration}`}
                     files={renderablePatch.files}
                     options={diffRenderOptions}
                     target={editTarget}
-                    onPendingChange={setSavingEdit}
+                    onDirtyChange={handleDirtyChange}
+                    onSession={handleEditSession}
+                    onSavingChange={setSavingEdit}
                   />
                 ) : (
                   renderablePatch.files.map((fileDiff) => (
@@ -1001,14 +1139,14 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
         onChoose={(choice) => {
           if (!picker) return;
           if (picker.purpose === "history") {
-            setSelection({
+            void changeSelection({
               kind: "commit",
               path: picker.path,
               sha: choice.ref,
               subject: choice.label,
             });
           } else if (picker.purpose === "compare") {
-            setSelection({
+            void changeSelection({
               kind: "compare",
               path: picker.path,
               ref: choice.ref,
@@ -1050,7 +1188,9 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
                 onUnstage={unstage}
                 onDiscard={(entries) => void discard(entries)}
                 onStash={stash}
-                onOpenDiff={(entry, staged) => setSelection({ kind: "working", entry, staged })}
+                onOpenDiff={(entry, staged) =>
+                  void changeSelection({ kind: "working", entry, staged })
+                }
                 onOpenFile={openFile}
                 onOpenTimeline={props.onOpenTimeline}
                 onAcceptSide={acceptSide}
@@ -1077,9 +1217,12 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
               pathFilter={ui.graphPath}
               onClearPathFilter={() => updateUi(uiKey, { graphPath: null })}
               onRefresh={log.refresh}
+              onCopyCommitMessage={(commit) =>
+                void copyText(commitMessage(commit), "Commit message copied")
+              }
               selectedSha={null}
               onSelectCommit={(commit) =>
-                setSelection({
+                void changeSelection({
                   kind: "commit",
                   path: null,
                   sha: commit.sha,
@@ -1118,11 +1261,11 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
                   updateUi(uiKey, { historyPath: null, historyIsFolder: false })
                 }
                 onOpenUncommitted={(path) =>
-                  setSelection({ kind: "compare", path, ref: "HEAD", label: "HEAD" })
+                  void changeSelection({ kind: "compare", path, ref: "HEAD", label: "HEAD" })
                 }
                 onRefresh={requestRefresh}
                 onSelectCommit={(commit: ScmCommit) =>
-                  setSelection({
+                  void changeSelection({
                     kind: "commit",
                     path: null,
                     sha: commit.sha,
@@ -1155,7 +1298,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
                 }
                 onRemoteAction={remoteAction}
                 onOpenTimelineEntry={(path, sha, subject) =>
-                  setSelection({ kind: "commit", path, sha, subject })
+                  void changeSelection({ kind: "commit", path, sha, subject })
                 }
               />
             ) : (

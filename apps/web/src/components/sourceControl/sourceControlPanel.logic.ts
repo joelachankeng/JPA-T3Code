@@ -569,3 +569,15 @@ export function changeBlockAnchors(
   }
   return anchors;
 }
+
+/**
+ * A commit's message as git wrote it: the subject, then the body after a blank
+ * line. Trailing blank lines are dropped so pasting it into a commit box or an
+ * issue does not carry git's own padding along.
+ */
+export function commitMessage(commit: Pick<ScmCommit, "subject" | "body">): string {
+  const body = commit.body.replace(/\s+$/, "");
+  const subject = commit.subject.trim();
+  if (body.length === 0) return subject;
+  return subject.length === 0 ? body : `${subject}\n\n${body}`;
+}
