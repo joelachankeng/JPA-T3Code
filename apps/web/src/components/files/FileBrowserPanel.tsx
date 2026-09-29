@@ -17,7 +17,11 @@ import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
-import { useFileContextMenu, type FileContextMenuAction } from "~/fileContextMenu";
+import {
+  resolveFileContextMenuAbsolutePath,
+  useFileContextMenu,
+  type FileContextMenuAction,
+} from "~/fileContextMenu";
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
@@ -45,6 +49,24 @@ interface FileBrowserPanelProps {
 
 function treePath(entry: ProjectEntry): string {
   return entry.kind === "directory" ? `${entry.path}/` : entry.path;
+}
+
+/** Copies one context-menu value; a toast is the menu's only feedback. */
+async function copyMenuValue(input: { value: string; label: string; description: string }) {
+  try {
+    await writeTextToClipboard(input.value);
+    toastManager.add({
+      type: "success",
+      title: `${input.label} copied`,
+      description: input.description,
+    });
+  } catch (error) {
+    toastManager.add({
+      type: "error",
+      title: `Failed to copy ${input.label.toLowerCase()}`,
+      description: error instanceof Error ? error.message : "An error occurred.",
+    });
+  }
 }
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
@@ -183,12 +205,31 @@ export default function FileBrowserPanel({
       : { x: anchorRect.left, y: anchorRect.bottom };
     const fileTarget = { environmentId, filePath: relativePath, workspaceRoot: cwd };
     const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+    // The absolute path is the environment host's, separators included; it is
+    // unavailable when the entry cannot be resolved against the workspace root.
+    const absolutePath = resolveFileContextMenuAbsolutePath(fileTarget);
     try {
       const clicked = await api.contextMenu.show(
         [
           ...fileMenuItems,
           { id: "copy-mention", label: "Copy mention" },
           { id: "add-to-chat", label: "Add to chat" },
+          ...(absolutePath === null
+            ? []
+            : [
+                {
+                  id: "copy-path" as const,
+                  label: "Copy path",
+                  icon: "copy" as const,
+                  separatorBefore: true,
+                },
+              ]),
+          {
+            id: "copy-relative-path" as const,
+            label: "Copy relative path",
+            icon: "copy" as const,
+            separatorBefore: absolutePath === null,
+          },
           // A directory has no single history to show, so the entry is only
           // offered for files.
           ...(isDirectory
@@ -214,16 +255,19 @@ export default function FileBrowserPanel({
         return;
       }
       if (clicked === "copy-mention") {
-        try {
-          await writeTextToClipboard(mention);
-          toastManager.add({ type: "success", title: "Mention copied", description: relativePath });
-        } catch (error) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to copy mention",
-            description: error instanceof Error ? error.message : "An error occurred.",
-          });
-        }
+        await copyMenuValue({ value: mention, label: "Mention", description: relativePath });
+        return;
+      }
+      if (clicked === "copy-path" && absolutePath !== null) {
+        await copyMenuValue({ value: absolutePath, label: "Path", description: absolutePath });
+        return;
+      }
+      if (clicked === "copy-relative-path") {
+        await copyMenuValue({
+          value: relativePath,
+          label: "Relative path",
+          description: relativePath,
+        });
         return;
       }
       if (clicked === "open-timeline") {
