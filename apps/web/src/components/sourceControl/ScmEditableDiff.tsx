@@ -105,7 +105,7 @@ export function ScmEditableDiff({
 
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const { environmentId, cwd, relativePath } = target;
-  const save = useCallback(async () => {
+  const save = async () => {
     onSavingChange(true);
     const written = session.buffer.contents;
     try {
@@ -121,7 +121,7 @@ export function ScmEditableDiff({
     } finally {
       onSavingChange(false);
     }
-  }, [cwd, environmentId, onSavingChange, relativePath, writeFile]);
+  };
 
   // Reverting goes through the editor rather than by rebuilding it: the
   // renderer hands a recycled instance its previous document back, so a
