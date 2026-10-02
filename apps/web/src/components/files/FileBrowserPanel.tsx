@@ -5,8 +5,10 @@ import type {
 } from "@pierre/trees";
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
+import * as Cause from "effect/Cause";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, FilePlusIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
@@ -25,10 +27,15 @@ import {
 import { readLocalApi } from "~/localApi";
 import { T3_PIERRE_ICONS } from "~/pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { projectEnvironment } from "~/state/projects";
+import { useAtomCommand } from "~/state/use-atom-command";
 
 import { createFileTreeDragMentionController } from "./fileTreeDragMention";
 import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTreeExpansion";
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
+import { newProjectFileDirectory } from "./newProjectFile";
+import { NewProjectFileDialog } from "./NewProjectFileDialog";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 
@@ -67,6 +74,27 @@ async function copyMenuValue(input: { value: string; label: string; description:
       description: error instanceof Error ? error.message : "An error occurred.",
     });
   }
+}
+
+function NewFileButton(props: { onPress: () => void }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label="New file"
+            onClick={props.onPress}
+          />
+        }
+      >
+        <FilePlusIcon className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup>New file</TooltipPopup>
+    </Tooltip>
+  );
 }
 
 function RefreshFilesButton(props: { isPending: boolean; onRefresh: () => void }) {
@@ -423,6 +451,42 @@ export default function FileBrowserPanel({
     if (query.trim()) pathSearch.refresh();
     onRefreshSelectedFile?.();
   };
+
+  // Null while the dialog is closed. The target folder is captured on open so a
+  // selection change behind the dialog cannot move where the file lands.
+  const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
+  const writeFile = useAtomCommand(projectEnvironment.writeFile);
+  const createFile = async (relativePath: string): Promise<string | null> => {
+    const separatorIndex = relativePath.lastIndexOf("/");
+    const directoryPath = separatorIndex === -1 ? "" : relativePath.slice(0, separatorIndex);
+    // The write truncates whatever it lands on, so a name already taken has to
+    // be refused before it runs. A folder that does not exist yet cannot
+    // collide, which is what a failed listing means here.
+    const listing = await executeAtomQuery(
+      appAtomRegistry,
+      projectEnvironment.listEntries({ environmentId, input: { cwd, directoryPath } }),
+      { refresh: true, reportFailure: false, reportDefect: false },
+    );
+    if (
+      listing._tag === "Success" &&
+      listing.value.entries.some((entry) => entry.path === relativePath)
+    ) {
+      return `${relativePath} already exists.`;
+    }
+    const written = await writeFile({ environmentId, input: { cwd, relativePath, contents: "" } });
+    if (written._tag === "Failure") {
+      const cause = Cause.squash(written.cause);
+      return cause instanceof Error ? cause.message : "Unable to create the file.";
+    }
+    // Every folder's listing is cached, so the whole chain is refreshed: a new
+    // folder stays invisible until its parent is listed again.
+    const segments = relativePath.split("/");
+    for (let index = 0; index < segments.length; index++) {
+      await load(segments.slice(0, index).join("/"), true);
+    }
+    onOpenFile(relativePath);
+    return null;
+  };
   useWorkspaceMutationRefresh({
     mutationId: workspaceMutationId,
     refresh: () => {
@@ -556,6 +620,9 @@ export default function FileBrowserPanel({
         data-surface-subheader
       >
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
+        <NewFileButton
+          onPress={() => setNewFileDirectory(newProjectFileDirectory(selectedPath, entryKinds))}
+        />
         <FileSearchField
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
@@ -616,6 +683,15 @@ export default function FileBrowserPanel({
         aria-label={`${projectName} files`}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
+      />
+      <NewProjectFileDialog
+        open={newFileDirectory !== null}
+        projectName={projectName}
+        directoryPath={newFileDirectory ?? ""}
+        onOpenChange={(open) => {
+          if (!open) setNewFileDirectory(null);
+        }}
+        create={createFile}
       />
     </div>
   );

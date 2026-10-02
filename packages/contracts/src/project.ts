@@ -8,7 +8,8 @@ import {
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
-const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
+/** Exported so a client can reject an over-long path before it builds the write payload. */
+export const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
 
 export const ProjectEntryKind = Schema.Literals(["file", "directory"]);
