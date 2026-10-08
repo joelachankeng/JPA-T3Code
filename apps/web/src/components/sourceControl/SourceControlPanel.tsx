@@ -733,7 +733,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
     [patch, resolvedTheme],
   );
 
-  const diffRenderOptions = useMemo<FileDiffOptions<undefined>>(
+  const diffRenderOptions = useMemo<FileDiffOptions<undefined, undefined>>(
     () => ({
       collapsed: false,
       diffStyle,

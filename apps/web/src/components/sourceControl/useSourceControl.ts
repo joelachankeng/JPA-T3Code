@@ -20,7 +20,7 @@ import type {
   ScmViewResult,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult } from "effect/unstable/reactivity";
+import { AsyncResult } from "effect/reactivity";
 import { useCallback } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";

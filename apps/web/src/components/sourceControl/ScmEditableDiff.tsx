@@ -7,8 +7,10 @@
  * header's save and clear controls, not the keystrokes, decide what reaches
  * the file.
  */
-import { Editor } from "@pierre/diffs/editor";
+import { Editor } from "@pierre/diffs/edit";
+import type { EditorFactory, EditorOptions } from "@pierre/diffs/edit";
 import { EditProvider, FileDiff as PierreFileDiff } from "@pierre/diffs/react";
+import type { FileDiffEditChangeHandler } from "@pierre/diffs/react";
 import type { FileDiffContentsLoader, FileDiffMetadata, FileDiffOptions } from "@pierre/diffs";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -19,6 +21,10 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 /** Distinguishes one edit session's document from the next one's. */
 let sessionCount = 0;
+
+/** The provider only supplies the constructor; the diff carries the options. */
+const createScmEditor: EditorFactory<undefined, undefined> = (editorType, options, editStateKey) =>
+  new Editor(editorType, options, editStateKey);
 
 /** Where an edit lands, and the two sides the editor opens against. */
 export type ScmEditTarget = {
@@ -40,7 +46,7 @@ export type ScmEditSession = {
 
 type ScmEditableDiffProps = {
   readonly files: ReadonlyArray<FileDiffMetadata>;
-  readonly options: FileDiffOptions<undefined>;
+  readonly options: FileDiffOptions<undefined, undefined>;
   readonly target: ScmEditTarget;
   /** Fires only when the buffer crosses between matching the file and not. */
   readonly onDirtyChange: (dirty: boolean) => void;
@@ -81,27 +87,35 @@ export function ScmEditableDiff({
     onDirtyChange(dirty);
   }, [dirty, onDirtyChange]);
 
-  // The editor and the text it is holding are made once and kept together.
-  // Only saving reads the text, so it stays off React state: re-rendering the
-  // panel on every keystroke would repaint the whole diff.
+  // The text the editor is holding is kept beside it. Only saving reads that
+  // text, so it stays off React state: re-rendering the panel on every
+  // keystroke would repaint the whole diff.
   //
   // `saved` is what the file last held, and moves forward on every write, so
   // saving can settle the dirty flag without rebuilding the editor and taking
-  // the caret with it.
-  const [session] = useState(() => {
-    const buffer = { contents: opened.newFile.contents, saved: opened.newFile.contents };
-    const editor = new Editor({
-      persistState: true,
-      persistStateStorage: "inMemory",
-      onChange: (file) => {
-        buffer.contents = file.contents;
-        setDirty(file.contents !== buffer.saved);
+  // the caret with it. `editor` is filled in when the session attaches, which
+  // is the only handle reverting has on the live document.
+  const [session] = useState(() => ({
+    buffer: { contents: opened.newFile.contents, saved: opened.newFile.contents },
+    editor: null as Editor<"file-diff", undefined, undefined> | null,
+  }));
+
+  const editorOptions = useMemo<EditorOptions<"file-diff", undefined, undefined>>(
+    () => ({
+      onAttach: (editor) => {
+        session.editor = editor;
       },
-    });
-    return { buffer, editor };
-  });
-  const { editor } = session;
-  useEffect(() => () => editor.cleanUp(), [editor]);
+    }),
+    [session],
+  );
+
+  const onEditChange = useCallback<FileDiffEditChangeHandler<undefined, undefined>>(
+    (event) => {
+      session.buffer.contents = event.file.contents;
+      setDirty(event.file.contents !== session.buffer.saved);
+    },
+    [session],
+  );
 
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
   const { environmentId, cwd, relativePath } = target;
@@ -128,6 +142,8 @@ export function ScmEditableDiff({
   // remount would restore the very edits being thrown away. Replacing the
   // whole range also leaves the change on the undo timeline.
   const revert = useCallback(() => {
+    const editor = session.editor;
+    if (!editor) return;
     const current = editor.getText();
     const target = session.buffer.saved;
     if (current === target) return;
@@ -141,7 +157,7 @@ export function ScmEditableDiff({
         newText: target,
       },
     ]);
-  }, [editor, session]);
+  }, [session]);
 
   useEffect(() => {
     onSession({ save, revert });
@@ -153,19 +169,25 @@ export function ScmEditableDiff({
     () => async () => ({ oldFile: opened.oldFile, newFile: opened.newFile }),
     [opened],
   );
-  const editableOptions = useMemo<FileDiffOptions<undefined>>(
+  const editableOptions = useMemo<FileDiffOptions<undefined, undefined>>(
     () => ({ ...options, loadDiffFiles }),
     [options, loadDiffFiles],
   );
 
   return (
-    <EditProvider editor={editor}>
+    <EditProvider createEditor={createScmEditor}>
       {opened.files.map((fileDiff) => (
         <PierreFileDiff
           key={resolveFileDiffPath(fileDiff)}
           fileDiff={fileDiff}
           options={editableOptions}
-          contentEditable
+          editorOptions={editorOptions}
+          // Retains this draft and its undo history. The key carries the
+          // session count, so a remount opens a fresh one and discarding does
+          // not hand back the edits it was asked to throw away.
+          editStateKey={opened.newFile.cacheKey}
+          edit
+          onEditChange={onEditChange}
         />
       ))}
     </EditProvider>
