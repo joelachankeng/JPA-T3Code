@@ -104,11 +104,13 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`, `composerDraft`,
-`turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
+`previewOpen`, `fileSurfaceFocus`, `modelPickerOpen`, `usagePageOpen`, `composerFocus`,
+`composerDraft`, `turnRunning`, `editableFocus`, `isWeb`, and `isDesktop`.
 `editableFocus` is true while a text field, the composer, or another editor has
-the keyboard. `isWeb` is true in a browser tab. `isDesktop` is true in the
-desktop app. Unknown keys evaluate to `false`.
+the keyboard. `fileSurfaceFocus` is true while an open file in the side panel has
+it, which is what hands `mod+f` to find in the file instead of find in the thread.
+`isWeb` is true in a browser tab. `isDesktop` is true in the desktop app. Unknown
+keys evaluate to `false`.
 
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
 model picker is open. Those defaults use `isDesktop` so they do not steal the
@@ -128,6 +130,26 @@ query searches the entire thread, including older messages. Thread search requir
 update an older server to enable it. Select **Retry** if a search fails. It defaults to
 `mod+f` outside terminals and previews. Press **Enter** or **Shift+Enter** to move between matches,
 and **Escape** to close find.
+
+## Find and replace in the open file
+
+`file.find` and `file.replace` search the file open in the side panel. They default to
+`mod+f` and `mod+h`, and apply while that file holds the keyboard; `mod+alt+f` also opens
+replace, because macOS keeps `cmd+h` for hiding the app. Click the file or use the
+magnifier in its header if find does not open, since `mod+f` stays with thread find
+until the file has focus.
+
+Press **Enter** or **Shift+Enter** to move between matches, and **Escape** to close.
+Toggles in the bar control matching case, whole words, and regular expressions; a regular
+expression matches within one line, and its replacement understands `$1` and `$&`.
+Replace is offered only where the file can be edited, so a read-only connection, a file
+outside the workspace and a preview limited to the first 1 MB all get find alone.
+Replacing every match is one undo step.
+
+A Markdown file shown as a rendered document is searched too, and searching it matches
+what you read rather than the source behind it: a heading matches `Title`, not
+`## Title`, and a link matches its label. Replace is unavailable there, since the
+rendered page is not the file; switch to the Markdown source to replace.
 
 ## Precedence
 

@@ -37,10 +37,10 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { FolderTree, Globe2, WrapTextIcon } from "lucide-react";
+import { FolderTree, Globe2, SearchIcon, WrapTextIcon } from "lucide-react";
 import { Code2, Eye, Table2 } from "lucide";
 import * as Schema from "effect/Schema";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
@@ -54,6 +54,7 @@ import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { resolveDiffThemeName } from "~/lib/diffRendering";
+import { FILE_SURFACE_FOCUS_ATTRIBUTE } from "~/lib/fileSurfaceFocus";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
 import { cn } from "~/lib/utils";
 import type { ChatFileAttachment } from "~/types";
@@ -77,6 +78,7 @@ import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
+import { FileFindBar } from "./FileFindBar";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
@@ -107,6 +109,7 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
+import { useFileFind, type FileFindReplaceEdit } from "./useFileFind";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
@@ -636,6 +639,8 @@ function useEditableAfterHighlight(file: FileContents) {
   return { ready, onPostRender };
 }
 
+type FileEditor = Editor<"file", FileCommentAnnotationGroup, undefined>;
+
 interface EditableFileSurfaceProps {
   environmentId: EnvironmentId;
   cwd: string;
@@ -645,6 +650,8 @@ interface EditableFileSurfaceProps {
   resolvedTheme: "light" | "dark";
   revealRequestId: number;
   wordWrap: boolean;
+  /** Shared with the panel, which applies find-and-replace edits through it. */
+  editorRef: React.RefObject<FileEditor | null>;
   onPostRender: FilePostRender;
   onPendingChange: (relativePath: string, pending: boolean) => void;
 }
@@ -663,6 +670,7 @@ function EditableFileSurface({
   resolvedTheme,
   revealRequestId,
   wordWrap,
+  editorRef,
   onPostRender,
   onPendingChange,
 }: EditableFileSurfaceProps) {
@@ -698,7 +706,6 @@ function EditableFileSurface({
   }
   const { ready: editable, onPostRender: onEditablePostRender } =
     useEditableAfterHighlight(externalFile);
-  const editorRef = useRef<Editor<"file", FileCommentAnnotationGroup, undefined> | null>(null);
   const editorOptions = useMemo<EditorOptions<"file", FileCommentAnnotationGroup, undefined>>(
     () => ({
       onAttach: (editor) => {
@@ -708,7 +715,7 @@ function EditableFileSurface({
         editorRef.current = null;
       },
     }),
-    [],
+    [editorRef],
   );
 
   // Mirrors the draft out to the save queue, the optimistic file query and the
@@ -946,10 +953,12 @@ function RenderedMarkdownSurface({
   threadRef,
   readOnly,
   onPendingChange,
+  rootRef,
 }: Omit<
   EditableFileSurfaceProps,
   | "resolvedTheme"
   | "composerDraftTarget"
+  | "editorRef"
   | "revealLine"
   | "revealRequestId"
   | "wordWrap"
@@ -957,6 +966,8 @@ function RenderedMarkdownSurface({
 > & {
   threadRef: ScopedThreadRef;
   readOnly: boolean;
+  /** The rendered tree, which find reads to search what the reader sees. */
+  rootRef: RefObject<HTMLDivElement | null>;
 }) {
   const saveCoordinator = useFileSaveCoordinator({
     environmentId,
@@ -967,25 +978,31 @@ function RenderedMarkdownSurface({
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <FileMarkdownPreview
-        text={contents}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        onTaskListChange={
-          readOnly
-            ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
-              }
-        }
-      />
+      <div ref={rootRef}>
+        <FileMarkdownPreview
+          text={contents}
+          cwd={cwd}
+          relativePath={relativePath}
+          threadRef={threadRef}
+          onTaskListChange={
+            readOnly
+              ? undefined
+              : ({ markerOffset, checked }) => {
+                  const currentContents =
+                    getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+                    contents;
+                  const nextContents = setMarkdownTaskChecked(
+                    currentContents,
+                    markerOffset,
+                    checked,
+                  );
+                  if (nextContents === currentContents) return;
+                  setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+                  saveCoordinator.change(nextContents);
+                }
+          }
+        />
+      </div>
     </ScrollArea>
   );
 }
@@ -1126,9 +1143,17 @@ export default function FilePreviewPanel({
   const showsRawText =
     previewPath !== null &&
     file.data !== null &&
+    !isMedia &&
     !(isMarkdown && renderMarkdown) &&
     !(tableDelimiter && renderTable) &&
     !renderBrowserFile;
+  // Truncated reads, host files and read-only connections are shown, never
+  // edited, so they get find without replace.
+  const sourceReadOnly = file.data?.truncated === true || isHostFile || !canWriteFiles;
+  // A rendered Markdown document is searchable as well, against the text it
+  // paints rather than its source. Replace stays out: the tree is output, not
+  // the file, so there is nothing in it to write back.
+  const renderedFindable = renderMarkdown && file.data !== null;
   const rendered = isMarkdown ? renderMarkdown : tableDelimiter ? renderTable : renderBrowserFile;
   const setRenderedPreferred = isMarkdown
     ? setRenderMarkdownPreferred
@@ -1144,7 +1169,38 @@ export default function FilePreviewPanel({
     isBrowserPreviewFile(previewPath);
   const absolutePath =
     relativePath && attachment === undefined ? resolvePathLinkTarget(relativePath, cwd) : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFileLineRevealPostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const fileEditorRef = useRef<FileEditor | null>(null);
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const markdownRootRef = useRef<HTMLDivElement>(null);
+  const applyFindReplace = useCallback((edits: ReadonlyArray<FileFindReplaceEdit>) => {
+    // One call, so replacing every match is a single step on the undo timeline.
+    fileEditorRef.current?.applyEdits(
+      edits.map((edit) => ({
+        range: {
+          start: { line: edit.line - 1, character: edit.column },
+          end: { line: edit.line - 1, character: edit.column + edit.length },
+        },
+        newText: edit.newText,
+      })),
+    );
+  }, []);
+  const find = useFileFind({
+    surfaceRef,
+    text: showsRawText && file.data !== null ? file.data.contents : null,
+    documentKey: attachment ? `attachment:${attachment.id}` : relativePath,
+    keybindings,
+    ...(showsRawText && !sourceReadOnly ? { applyReplace: applyFindReplace } : {}),
+    ...(renderedFindable ? { renderedRootRef: markdownRootRef } : {}),
+  });
+  const onFindPostRender = find.onPostRender;
+  const onFilePostRender = useCallback<FilePostRender>(
+    (fileContainer, instance, phase) => {
+      onFileLineRevealPostRender(fileContainer, instance, phase);
+      onFindPostRender(fileContainer, instance, phase);
+    },
+    [onFileLineRevealPostRender, onFindPostRender],
+  );
   useWorkspaceMutationRefresh({
     enabled:
       attachment === undefined &&
@@ -1261,6 +1317,15 @@ export default function FilePreviewPanel({
               compact
             />
           ) : null}
+          {showsRawText || renderedFindable ? (
+            <FileSurfaceAction
+              label="Find in file"
+              pressed={find.isOpen}
+              onPress={() => (find.isOpen ? find.bar.onClose() : find.open("find"))}
+            >
+              <SearchIcon className="size-3.5" />
+            </FileSurfaceAction>
+          ) : null}
           {canToggleRendered && renderedMode ? (
             <FileSurfaceAction
               label={renderedToggleLabel(renderedMode, rendered)}
@@ -1322,8 +1387,20 @@ export default function FilePreviewPanel({
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
         <div
-          className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
+          ref={surfaceRef}
+          // Focusable so clicking the file hands it the keyboard, which is what
+          // gives find the `mod+f` chord instead of thread find.
+          tabIndex={-1}
+          // Marked only while the pane has something to search: source text, or
+          // a rendered Markdown document. A table and a media file keep `mod+f`
+          // with thread find rather than claiming a chord they cannot answer.
+          {...(showsRawText || renderedFindable ? { [FILE_SURFACE_FOCUS_ATTRIBUTE]: "" } : {})}
+          className={cn(
+            "relative min-w-0 flex-1 flex-col overflow-hidden outline-none",
+            previewPath ? "flex" : "hidden",
+          )}
         >
+          <FileFindBar {...find.bar} />
           {isDirectory ? null : relativePath && attachment ? (
             <AttachmentFilePreview
               key={`${environmentId}:${attachment.id}`}
@@ -1415,6 +1492,7 @@ export default function FilePreviewPanel({
                 contents={file.data.contents}
                 readOnly={isHostFile || !canWriteFiles}
                 onPendingChange={onPendingChange}
+                rootRef={markdownRootRef}
               />
             ) : tableDelimiter && renderTable ? (
               <DelimitedTablePreview
@@ -1423,7 +1501,7 @@ export default function FilePreviewPanel({
                 text={file.data.contents}
                 delimiter={tableDelimiter}
               />
-            ) : file.data.truncated || isHostFile || !canWriteFiles ? (
+            ) : sourceReadOnly ? (
               <SourceFilePreview
                 name={relativePath}
                 text={file.data.contents}
@@ -1442,6 +1520,7 @@ export default function FilePreviewPanel({
                   resolvedTheme={resolvedTheme}
                   revealRequestId={revealRequestId}
                   wordWrap={wordWrap}
+                  editorRef={fileEditorRef}
                   onPostRender={onFilePostRender}
                   onPendingChange={onPendingChange}
                 />

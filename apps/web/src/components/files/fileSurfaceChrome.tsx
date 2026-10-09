@@ -7,6 +7,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { DIFF_SURFACE_THEME_UNSAFE_CSS } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
 
+import { FILE_FIND_HIGHLIGHT_UNSAFE_CSS } from "./fileFindHighlights";
+
 /**
  * One header row for every file surface in the side panel, whether the file
  * comes from the workspace or was captured as an attachment: crumbs on the
@@ -20,6 +22,7 @@ export const FILE_LINK_REVEAL_ATTRIBUTE = "data-file-link-reveal";
 
 export const FILE_LINK_REVEAL_UNSAFE_CSS = `
   ${DIFF_SURFACE_THEME_UNSAFE_CSS}
+  ${FILE_FIND_HIGHLIGHT_UNSAFE_CSS}
 
   diffs-container {
     --diffs-bg: var(--code-background, var(--background)) !important;

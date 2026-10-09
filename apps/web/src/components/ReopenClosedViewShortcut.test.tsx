@@ -55,6 +55,7 @@ vi.mock("../composerDraftStore", () => {
 });
 vi.mock("../commandPaletteBus", () => ({ isCommandPaletteOpen: () => state.paletteOpen }));
 vi.mock("../lib/editableFocus", () => ({ isEditableFocused: () => false }));
+vi.mock("../lib/fileSurfaceFocus", () => ({ isFileSurfaceFocused: () => false }));
 vi.mock("../lib/previewFocus", () => ({ isPreviewFocused: () => false }));
 vi.mock("../lib/terminalFocus", () => ({ isTerminalFocused: () => false }));
 vi.mock("../modelPickerVisibility", () => ({ isModelPickerOpen: () => false }));

@@ -294,6 +294,7 @@ import { WizardPopup } from "./ui/wizard";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { deepActiveElement, isEditableFocused } from "../lib/editableFocus";
+import { isFileSurfaceFocused } from "../lib/fileSurfaceFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { resolveChatShortcutCommand, shortcutLabelForCommand } from "../keybindings";
 import { requestConfirmDialog } from "../confirmDialog";
@@ -7983,6 +7984,7 @@ export default function ChatView(props: ChatViewProps) {
       terminalOpen: Boolean(terminalUiState.terminalOpen),
       previewFocus: isPreviewFocused(),
       previewOpen: previewPanelOpen,
+      fileSurfaceFocus: isFileSurfaceFocused(),
       editableFocus: isEditableFocused(eventTarget),
       modelPickerOpen: composerRef.current?.isModelPickerOpen() ?? false,
       composerFocus: document.activeElement?.getAttribute("data-testid") === "composer-editor",

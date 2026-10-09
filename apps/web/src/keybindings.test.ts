@@ -814,6 +814,45 @@ describe("chat/editor shortcuts", () => {
     );
   });
 
+  it("gives mod+f to the file surface only while it holds the keyboard", () => {
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { fileSurfaceFocus: true },
+      }),
+      "file.find",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "f", metaKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "MacIntel",
+        context: { fileSurfaceFocus: false },
+      }),
+      "chat.find",
+    );
+  });
+
+  it("matches file.replace on both of its chords inside the file surface", () => {
+    for (const shortcut of [
+      event({ key: "h", metaKey: true }),
+      event({ key: "f", metaKey: true, altKey: true }),
+    ]) {
+      assert.strictEqual(
+        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform: "MacIntel",
+          context: { fileSurfaceFocus: true },
+        }),
+        "file.replace",
+      );
+      assert.notStrictEqual(
+        resolveShortcutCommand(shortcut, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform: "MacIntel",
+          context: { fileSurfaceFocus: false },
+        }),
+        "file.replace",
+      );
+    }
+  });
+
   it("matches diff.toggle shortcut outside terminal focus", () => {
     assert.isTrue(
       isDiffToggleShortcut(event({ key: "d", metaKey: true }), DEFAULT_BINDINGS, {

@@ -17,6 +17,7 @@ import {
   shortcutLabelForCommand,
 } from "../keybindings";
 import { isEditableFocused } from "../lib/editableFocus";
+import { isFileSurfaceFocused } from "../lib/fileSurfaceFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { isModelPickerOpen } from "../modelPickerVisibility";
@@ -189,6 +190,7 @@ function NavigationHistoryShortcuts() {
             ? selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, routeThreadRef) ===
               "preview"
             : false,
+          fileSurfaceFocus: isFileSurfaceFocused(),
           editableFocus: isEditableFocused(event.target),
           modelPickerOpen: isModelPickerOpen(),
         },

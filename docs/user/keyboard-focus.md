@@ -7,3 +7,6 @@ See [Keybindings](./keybindings.md) to customize these shortcuts.
 
 If you return to typing while a terminal is starting, the composer keeps focus when the terminal
 becomes ready. Opening or switching to a terminal explicitly still focuses it.
+
+Opening a file in the side panel leaves focus in the composer, so `mod+f` still finds in the
+thread. Click the file first, and `mod+f` finds inside it instead.

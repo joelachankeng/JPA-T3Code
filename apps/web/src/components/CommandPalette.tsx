@@ -130,6 +130,7 @@ import {
   resolveProjectPathForDispatch,
 } from "../lib/projectPaths";
 import { onOpenCommandPalette } from "../commandPaletteBus";
+import { isFileSurfaceFocused } from "../lib/fileSurfaceFocus";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import {
@@ -527,6 +528,7 @@ export function CommandPalette({ children }: { children: ReactNode }) {
           terminalOpen,
           previewFocus: isPreviewFocused(),
           previewOpen,
+          fileSurfaceFocus: isFileSurfaceFocused(),
           modelPickerOpen: composerHandleRef.current?.isModelPickerOpen() ?? false,
         },
       });
