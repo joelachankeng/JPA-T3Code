@@ -29,6 +29,11 @@ workspace, and `mod+shift+g` for the Git branch. The workspace menu includes the
 current checkout, a new worktree, and the previous worktree when available.
 Use `mod+shift+l` to reuse the previous worktree directly.
 
+To change effort one step without opening the picker, bind
+**Composer: Increase Effort** and **Composer: Decrease Effort** in Keybindings.
+Both are unbound by default. Increase wraps from the highest level to the
+lowest, and decrease wraps from the lowest level to the highest.
+
 In the model picker, press Left in an empty search field or Shift+Tab to reach
 the provider list. Use Up/Down to move and Enter to choose. Right returns to
 model search. `mod+shift+up` and `mod+shift+down` switch providers directly and clear the
@@ -113,7 +118,8 @@ it, which is what hands `mod+f` to find in the file instead of find in the threa
 keys evaluate to `false`.
 
 `mod+1` through `mod+9` jump to the first nine threads, and to models while the
-model picker is open. Those defaults use `isDesktop` so they do not steal the
+model picker is open. The thread jumps do not run while the model picker is open.
+Those defaults use `isDesktop` so they do not steal the
 browser's tab-switch shortcuts. Remove that condition in Settings if you want
 the same jumps in a browser.
 

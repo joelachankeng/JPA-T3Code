@@ -38,7 +38,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { requestConfirmDialog } from "~/confirmDialog";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
-import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
+import { updateClientSettings, useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
@@ -237,7 +237,6 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   const clientSettings = useClientSettings();
   const diffStyle = clientSettings.diffLayout === "split" ? "split" : "unified";
   const wordWrap = clientSettings.wordWrap;
-  const updateClientSettings = useUpdateClientSettings();
   const [ignoreWhitespace, setIgnoreWhitespace] = useState(false);
   const [savingEdit, setSavingEdit] = useState(false);
   const [dirtyEdit, setDirtyEdit] = useState(false);
