@@ -72,6 +72,8 @@ import {
   ProjectSearchContentsError,
   ProjectSearchEntriesError,
   ProjectWriteFileError,
+  ProjectRenameEntryError,
+  ProjectDeleteEntryError,
   ProjectMutationError,
   ProviderUploadFeedbackError,
   ProviderSetupError,
@@ -539,6 +541,8 @@ function projectFileFailureContext(
       return { failure: "path_not_file", resolvedPath: error.resolvedPath };
     case "WorkspaceBinaryFileError":
       return { failure: "binary_file", resolvedPath: error.resolvedPath };
+    case "WorkspacePathExistsError":
+      return { failure: "path_exists", resolvedPath: error.resolvedPath };
     default:
       return unexpectedCompatibilityError(error);
   }
@@ -2673,6 +2677,30 @@ const layerWsRpc = (
             Effect.mapError(
               (cause) =>
                 new ProjectWriteFileError({
+                  cwd: input.cwd,
+                  relativePath: input.relativePath,
+                  ...projectFileFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsRenameEntry]: (input) =>
+          workspaceFileSystem.renameEntry(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectRenameEntryError({
+                  cwd: input.cwd,
+                  relativePath: input.relativePath,
+                  ...projectFileFailureContext(cause),
+                  cause,
+                }),
+            ),
+          ),
+        [WS_METHODS.projectsDeleteEntry]: (input) =>
+          workspaceFileSystem.deleteEntry(input).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProjectDeleteEntryError({
                   cwd: input.cwd,
                   relativePath: input.relativePath,
                   ...projectFileFailureContext(cause),

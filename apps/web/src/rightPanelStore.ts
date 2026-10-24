@@ -159,6 +159,13 @@ interface RightPanelStoreState {
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
+  /**
+   * Points the open tabs of a renamed file, or of the files inside a renamed
+   * folder, at their new paths, keeping their places.
+   */
+  renameFilePath: (ref: ScopedThreadRef, fromPath: string, toPath: string) => void;
+  /** Closes the tabs of a deleted file, or of every file inside a deleted folder. */
+  closeFilePath: (ref: ScopedThreadRef, relativePath: string) => void;
   openTimeline: (ref: ScopedThreadRef, relativePath: string, view?: "list" | "visual") => void;
   /** Open the Files surface with a file selected in its tree, without opening the file. */
   revealInFiles: (ref: ScopedThreadRef, relativePath: string) => void;
@@ -784,6 +791,62 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   )
                 : [...withoutStandaloneExplorer, surface],
             };
+          }),
+        ),
+      renameFilePath: (ref, fromPath, toPath) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const moved = (path: string) =>
+              path === fromPath
+                ? toPath
+                : path.startsWith(`${fromPath}/`)
+                  ? `${toPath}${path.slice(fromPath.length)}`
+                  : null;
+            if (!current.surfaces.some((s) => s.kind === "file" && moved(s.relativePath) !== null))
+              return current;
+            const surfaces = current.surfaces.map((surface) => {
+              if (surface.kind !== "file" || surface.attachment) return surface;
+              const nextPath = moved(surface.relativePath);
+              return nextPath === null
+                ? surface
+                : fileSurface(nextPath, null, surface.revealRequestId + 1);
+            });
+            const activeIndex = current.surfaces.findIndex(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            return {
+              ...current,
+              activeSurfaceId: surfaces[activeIndex]?.id ?? current.activeSurfaceId,
+              // A tab already open at the new path would now be a duplicate.
+              surfaces: surfaces.filter(
+                (surface, index) =>
+                  surfaces.findIndex((entry) => entry.id === surface.id) === index,
+              ),
+            };
+          }),
+        ),
+      closeFilePath: (ref, relativePath) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const removed = (surface: RightPanelSurface) =>
+              surface.kind === "file" &&
+              !surface.attachment &&
+              (surface.relativePath === relativePath ||
+                surface.relativePath.startsWith(`${relativePath}/`));
+            if (!current.surfaces.some(removed)) return current;
+            const activeIndex = current.surfaces.findIndex(
+              (surface) => surface.id === current.activeSurfaceId,
+            );
+            const surfaces = current.surfaces.filter((surface) => !removed(surface));
+            // The tree that deleted the file stays on screen rather than the panel closing.
+            if (surfaces.length === 0) {
+              const files = singletonSurface("files");
+              return { ...current, surfaces: [files], activeSurfaceId: files.id };
+            }
+            const active = current.surfaces[activeIndex];
+            if (active === undefined || !removed(active)) return { ...current, surfaces };
+            const fallback = surfaces[Math.min(activeIndex, surfaces.length - 1)] ?? null;
+            return { ...current, surfaces, activeSurfaceId: fallback?.id ?? null };
           }),
         ),
       openTimeline: (ref, requestedPath, view) =>

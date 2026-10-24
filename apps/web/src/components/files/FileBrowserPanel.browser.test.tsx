@@ -42,7 +42,10 @@ vi.mock("~/state/queries", () => ({
 vi.mock("~/hooks/useTheme", () => ({ useTheme: () => ({ resolvedTheme: "dark" }) }));
 vi.mock("~/hooks/useWorkspaceMutationRefresh", () => ({ useWorkspaceMutationRefresh: vi.fn() }));
 vi.mock("~/composerHandleContext", () => ({ useComposerHandleContext: () => null }));
-vi.mock("~/fileContextMenu", () => ({ useFileContextMenu: () => ({}) }));
+vi.mock("~/fileContextMenu", () => ({
+  useFileContextMenu: () => ({}),
+  resolveFileContextMenuAbsolutePath: () => null,
+}));
 vi.mock("~/localApi", () => ({ readLocalApi: () => undefined }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
@@ -63,6 +66,9 @@ describe("Files panel search", () => {
     selectedPathRevealId: 0,
     onOpenFile: vi.fn(),
     onOpenTimeline: vi.fn(),
+    onPathRenamed: vi.fn(),
+    onPathDeleted: vi.fn(),
+    pendingFileSurfaceIds: new Set<string>(),
     workspaceMutationId: null,
   };
 

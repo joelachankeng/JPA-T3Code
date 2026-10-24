@@ -22,6 +22,7 @@ import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
+import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import {
   resolveFileContextMenuAbsolutePath,
@@ -41,7 +42,12 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { loadFileAncestors } from "./loadFileAncestors";
 import { newProjectFileDirectory } from "./newProjectFile";
-import { NewProjectFileDialog } from "./NewProjectFileDialog";
+import {
+  DeleteProjectEntryDialog,
+  type DeleteProjectEntryTarget,
+} from "./DeleteProjectEntryDialog";
+import { ProjectFilePathDialog, type ProjectFilePathDialogTarget } from "./ProjectFilePathDialog";
+import { usePendingFileSaves } from "./usePendingFileSaves";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
 
@@ -54,6 +60,10 @@ interface FileBrowserPanelProps {
   onOpenFile: (relativePath: string) => void;
   /** Opens the file's commit history as its own surface, as VS Code's Open Timeline does. */
   onOpenTimeline: (relativePath: string) => void;
+  onPathRenamed: (fromPath: string, toPath: string) => void;
+  onPathDeleted: (relativePath: string) => void;
+  /** Tabs whose edits have not been saved yet, as `file:<path>` ids. */
+  pendingFileSurfaceIds: ReadonlySet<string>;
   /**
    * Set when `cwd` is a host folder outside the workspace rather than the
    * workspace root. Entries then open and mention as host paths. A host folder can
@@ -193,6 +203,9 @@ export default function FileBrowserPanel({
   selectedPathRevealId,
   onOpenFile,
   onOpenTimeline,
+  onPathRenamed,
+  onPathDeleted,
+  pendingFileSurfaceIds,
   onRefreshSelectedFile,
   workspaceMutationId,
   hostFolder = false,
@@ -241,6 +254,11 @@ export default function FileBrowserPanel({
     return () => document.removeEventListener("contextmenu", capturePointer, true);
   }, []);
 
+  // Null while the dialog is closed. The target is captured on open so a
+  // selection change behind the dialog cannot move where the file lands.
+  const [pathDialog, setPathDialog] = useState<ProjectFilePathDialogTarget | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteProjectEntryTarget | null>(null);
+
   /** Combines the file actions (open/reveal/open with) with the panel's own mention actions. */
   const showEntryContextMenu = useStableCallback(
     (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
@@ -267,7 +285,36 @@ export default function FileBrowserPanel({
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
-            { id: "copy-mention", label: "Copy mention" },
+            // Writes land inside the workspace only, so a host folder offers neither.
+            ...(hostFolder
+              ? []
+              : [
+                  ...(isDirectory
+                    ? [
+                        {
+                          id: "new-file" as const,
+                          label: "New file…",
+                          separatorBefore: fileMenuItems.length > 0,
+                        },
+                      ]
+                    : []),
+                  {
+                    id: "rename" as const,
+                    label: "Rename…",
+                    separatorBefore: !isDirectory && fileMenuItems.length > 0,
+                  },
+                  {
+                    id: "delete" as const,
+                    label: "Delete…",
+                    icon: "trash" as const,
+                    destructive: true,
+                  },
+                ]),
+            {
+              id: "copy-mention",
+              label: "Copy mention",
+              separatorBefore: !hostFolder,
+            },
             { id: "add-to-chat", label: "Add to chat" },
             ...(absolutePath === null
               ? []
@@ -307,6 +354,18 @@ export default function FileBrowserPanel({
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");
         if (isFileMenuAction) {
           await fileContextMenu.activate(clicked as FileContextMenuAction, fileTarget);
+          return;
+        }
+        if (clicked === "new-file") {
+          setPathDialog({ kind: "create", directoryPath: relativePath });
+          return;
+        }
+        if (clicked === "rename") {
+          setPathDialog({ kind: "rename", relativePath, isDirectory });
+          return;
+        }
+        if (clicked === "delete") {
+          setDeleteTarget({ relativePath, isDirectory });
           return;
         }
         if (clicked === "copy-mention") {
@@ -360,15 +419,20 @@ export default function FileBrowserPanel({
   const dragMention = createFileTreeDragMentionController(
     hostFolder ? { mentionPath: (path: string) => joinHostPath(cwd, path) } : {},
   );
-  const { model } = useFileTree({
-    composition: {
-      contextMenu: {
-        triggerMode: "right-click",
-        onOpen: (item, context) => {
-          showEntryContextMenu(item, context);
-        },
+  // Touch browsers such as iOS Safari never fire contextmenu, so each row gets
+  // a menu button there instead.
+  const coarsePointer = useMediaQuery({ pointer: "coarse" });
+  const contextMenuComposition = (touch: boolean) => ({
+    contextMenu: {
+      triggerMode: touch ? ("both" as const) : ("right-click" as const),
+      buttonVisibility: "always" as const,
+      onOpen: (item: TreeContextMenuItem, context: TreeContextMenuOpenContext) => {
+        showEntryContextMenu(item, context);
       },
     },
+  });
+  const { model } = useFileTree({
+    composition: contextMenuComposition(coarsePointer),
     dragAndDrop: { canDrop: () => false },
     density: "compact",
     fileTreeSearchMode: "hide-non-matches",
@@ -400,6 +464,12 @@ export default function FileBrowserPanel({
     onSearchChange: (value) => setQuery(value ?? ""),
     unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
   });
+  const coarsePointerRef = useRef(coarsePointer);
+  useEffect(() => {
+    if (coarsePointerRef.current === coarsePointer) return;
+    coarsePointerRef.current = coarsePointer;
+    model.setComposition({ ...model.getComposition(), ...contextMenuComposition(coarsePointer) });
+  }, [coarsePointer, contextMenuComposition, model]);
   useEffect(() => {
     if (loadingDirectoriesRef.current === loadingDirectories) return;
     loadingDirectoriesRef.current = loadingDirectories;
@@ -476,10 +546,62 @@ export default function FileBrowserPanel({
     onRefreshSelectedFile?.();
   };
 
-  // Null while the dialog is closed. The target folder is captured on open so a
-  // selection change behind the dialog cannot move where the file lands.
-  const [newFileDirectory, setNewFileDirectory] = useState<string | null>(null);
   const writeFile = useAtomCommand(projectEnvironment.writeFile);
+  const renameEntry = useAtomCommand(projectEnvironment.renameEntry, { reportFailure: false });
+  const deleteEntry = useAtomCommand(projectEnvironment.deleteEntry, { reportFailure: false });
+  const waitForPendingSaves = usePendingFileSaves(pendingFileSurfaceIds);
+  const parentDirectory = (relativePath: string) => {
+    const separatorIndex = relativePath.lastIndexOf("/");
+    return separatorIndex === -1 ? "" : relativePath.slice(0, separatorIndex);
+  };
+  // Every folder's listing is cached, so the whole chain is refreshed: a new
+  // folder stays invisible until its parent is listed again.
+  const reloadFolderChain = async (relativePath: string) => {
+    const segments = relativePath.split("/");
+    for (let index = 0; index < segments.length; index++) {
+      await load(segments.slice(0, index).join("/"), true);
+    }
+  };
+  const renamePath = async (relativePath: string, nextRelativePath: string) => {
+    if (!(await waitForPendingSaves(relativePath))) {
+      return `Unsaved edits in ${relativePath} could not be saved yet. Try again in a moment.`;
+    }
+    const renamed = await renameEntry({
+      environmentId,
+      input: { cwd, relativePath, nextRelativePath },
+    });
+    if (renamed._tag === "Failure") {
+      const cause = Cause.squash(renamed.cause);
+      if (typeof cause === "object" && cause !== null && "failure" in cause) {
+        if (cause.failure === "path_exists") return `${nextRelativePath} already exists.`;
+      }
+      return cause instanceof Error ? cause.message : "Unable to rename.";
+    }
+    await load(parentDirectory(relativePath), true);
+    await reloadFolderChain(renamed.value.relativePath);
+    // A folder's own listing may be cached from an earlier visit to the same name.
+    if (entryKindsRef.current.get(relativePath) === "directory")
+      await load(renamed.value.relativePath, true);
+    onPathRenamed(relativePath, renamed.value.relativePath);
+    return null;
+  };
+  const deletePath = async ({ relativePath }: DeleteProjectEntryTarget) => {
+    if (!(await waitForPendingSaves(relativePath))) {
+      return `Unsaved edits in ${relativePath} could not be saved yet. Try again in a moment.`;
+    }
+    const deleted = await deleteEntry({ environmentId, input: { cwd, relativePath } });
+    if (deleted._tag === "Failure") {
+      const cause = Cause.squash(deleted.cause);
+      return cause instanceof Error ? cause.message : "Unable to delete.";
+    }
+    await load(parentDirectory(relativePath), true);
+    onPathDeleted(relativePath);
+    return null;
+  };
+  const submitPathDialog = (target: ProjectFilePathDialogTarget, relativePath: string) =>
+    target.kind === "rename"
+      ? renamePath(target.relativePath, relativePath)
+      : createFile(relativePath);
   const createFile = async (relativePath: string): Promise<string | null> => {
     const separatorIndex = relativePath.lastIndexOf("/");
     const directoryPath = separatorIndex === -1 ? "" : relativePath.slice(0, separatorIndex);
@@ -502,12 +624,7 @@ export default function FileBrowserPanel({
       const cause = Cause.squash(written.cause);
       return cause instanceof Error ? cause.message : "Unable to create the file.";
     }
-    // Every folder's listing is cached, so the whole chain is refreshed: a new
-    // folder stays invisible until its parent is listed again.
-    const segments = relativePath.split("/");
-    for (let index = 0; index < segments.length; index++) {
-      await load(segments.slice(0, index).join("/"), true);
-    }
+    await reloadFolderChain(relativePath);
     onOpenFile(relativePath);
     return null;
   };
@@ -637,7 +754,17 @@ export default function FileBrowserPanel({
         <RefreshFilesButton isPending={isPending} onRefresh={handleRefresh} />
         {hostFolder ? null : (
           <NewFileButton
-            onPress={() => setNewFileDirectory(newProjectFileDirectory(selectedPath, entryKinds))}
+            onPress={() =>
+              setPathDialog({
+                kind: "create",
+                // A folder clicked in the tree outranks the open file, which a
+                // folder click leaves in place.
+                directoryPath: newProjectFileDirectory(
+                  model.getSelectedPaths().at(-1)?.replace(/\/$/, "") ?? selectedPath,
+                  entryKinds,
+                ),
+              })
+            }
           />
         )}
         <FileSearchField
@@ -715,14 +842,16 @@ export default function FileBrowserPanel({
           style={pierreTreeStyle(resolvedTheme)}
         />
       )}
-      <NewProjectFileDialog
-        open={newFileDirectory !== null}
+      <ProjectFilePathDialog
+        target={pathDialog}
         projectName={projectName}
-        directoryPath={newFileDirectory ?? ""}
-        onOpenChange={(open) => {
-          if (!open) setNewFileDirectory(null);
-        }}
-        create={createFile}
+        onClose={() => setPathDialog(null)}
+        submit={submitPathDialog}
+      />
+      <DeleteProjectEntryDialog
+        target={deleteTarget}
+        onClose={() => setDeleteTarget(null)}
+        confirm={deletePath}
       />
     </div>
   );

@@ -8,6 +8,10 @@ import type {
   FilesystemGetMetadataResult,
   ProjectReadFileInput,
   ProjectReadFileResult,
+  ProjectDeleteEntryInput,
+  ProjectDeleteEntryResult,
+  ProjectRenameEntryInput,
+  ProjectRenameEntryResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "@t3tools/contracts";
@@ -50,6 +54,8 @@ export class WorkspaceFileSystemOperationError extends Schema.TaggedError<Worksp
       "close",
       "make-directory",
       "write-file",
+      "rename",
+      "delete",
     ]),
     cause: Schema.Defect(),
   },
@@ -99,11 +105,25 @@ export class WorkspaceBinaryFileError extends Schema.TaggedError<WorkspaceBinary
   }
 }
 
+export class WorkspacePathExistsError extends Schema.TaggedError<WorkspacePathExistsError>()(
+  "WorkspacePathExistsError",
+  {
+    workspaceRoot: Schema.String,
+    relativePath: Schema.String,
+    resolvedPath: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `Workspace path '${this.relativePath}' in '${this.workspaceRoot}' already exists: ${this.resolvedPath}`;
+  }
+}
+
 export const WorkspaceFileSystemError = Schema.Union([
   WorkspaceFileSystemOperationError,
   WorkspaceFilePathEscapeError,
   WorkspacePathNotFileError,
   WorkspaceBinaryFileError,
+  WorkspacePathExistsError,
 ]);
 export type WorkspaceFileSystemError = typeof WorkspaceFileSystemError.Type;
 
@@ -125,6 +145,27 @@ export class WorkspaceFileSystem extends Context.Service<
       input: ProjectWriteFileInput,
     ) => Effect.Effect<
       ProjectWriteFileResult,
+      | WorkspaceFileSystemError
+      | WorkspacePaths.WorkspacePathOutsideRootError
+      | KnownWorkspaces.UnknownWorkspaceError
+    >;
+    /**
+     * Renames or moves one file or folder inside a known workspace, refusing to
+     * replace an existing entry.
+     */
+    readonly renameEntry: (
+      input: ProjectRenameEntryInput,
+    ) => Effect.Effect<
+      ProjectRenameEntryResult,
+      | WorkspaceFileSystemError
+      | WorkspacePaths.WorkspacePathOutsideRootError
+      | KnownWorkspaces.UnknownWorkspaceError
+    >;
+    /** Permanently deletes one file or folder, with its contents, inside a known workspace. */
+    readonly deleteEntry: (
+      input: ProjectDeleteEntryInput,
+    ) => Effect.Effect<
+      ProjectDeleteEntryResult,
       | WorkspaceFileSystemError
       | WorkspacePaths.WorkspacePathOutsideRootError
       | KnownWorkspaces.UnknownWorkspaceError
@@ -384,7 +425,7 @@ export const make = Effect.gen(function* () {
    * rejected rather than written through.
    */
   const resolveWriteTarget = Effect.fn("WorkspaceFileSystem.resolveWriteTarget")(function* (
-    input: ProjectWriteFileInput,
+    input: Pick<ProjectWriteFileInput, "cwd" | "relativePath">,
   ) {
     const target = yield* workspacePaths.resolveRelativePathWithinRoot({
       workspaceRoot: input.cwd,
@@ -461,7 +502,7 @@ export const make = Effect.gen(function* () {
         resolvedPath: realTargetPath,
       });
     }
-    return { relativePath: target.relativePath, realTargetPath };
+    return { relativePath: target.relativePath, realTargetPath, namedTargetPath };
   });
 
   const writeFile: WorkspaceFileSystem["Service"]["writeFile"] = Effect.fn(
@@ -508,7 +549,109 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
+  const renameEntry: WorkspaceFileSystem["Service"]["renameEntry"] = Effect.fn(
+    "WorkspaceFileSystem.renameEntry",
+  )(function* (input) {
+    yield* knownWorkspaces.assertContains(input.cwd);
+    const source = yield* resolveWriteTarget(input);
+    const destination = yield* resolveWriteTarget({
+      cwd: input.cwd,
+      relativePath: input.nextRelativePath,
+    });
+    const operationError =
+      (operation: "stat" | "make-directory" | "rename", operationPath: string) =>
+      (cause: unknown) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: source.realTargetPath,
+          operationPath,
+          operation,
+          cause,
+        });
+
+    // lstat the path as named so a symlink is refused instead of its target being moved.
+    const sourceStat = yield* Effect.tryPromise({
+      try: () => NodeFSP.lstat(source.namedTargetPath, { bigint: true }),
+      catch: operationError("stat", source.namedTargetPath),
+    });
+    if (!sourceStat.isFile() && !sourceStat.isDirectory()) {
+      return yield* new WorkspacePathNotFileError({
+        workspaceRoot: input.cwd,
+        relativePath: input.relativePath,
+        resolvedPath: source.realTargetPath,
+      });
+    }
+    // On a case-insensitive volume the destination of `a.md` -> `A.md` is the source itself,
+    // and its realpath carries the old casing, so the new name is taken as requested.
+    const destinationPath = path.join(
+      path.dirname(destination.realTargetPath),
+      path.basename(destination.namedTargetPath),
+    );
+    const destinationStat = yield* Effect.tryPromise({
+      try: () =>
+        NodeFSP.lstat(destination.namedTargetPath, { bigint: true }).catch((error) => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+          throw error;
+        }),
+      catch: operationError("stat", destination.namedTargetPath),
+    });
+    if (
+      destinationStat !== null &&
+      (destinationStat.ino !== sourceStat.ino || destinationStat.dev !== sourceStat.dev)
+    ) {
+      return yield* new WorkspacePathExistsError({
+        workspaceRoot: input.cwd,
+        relativePath: input.nextRelativePath,
+        resolvedPath: destinationPath,
+      });
+    }
+
+    // Checked before the destination's parents are made, which would otherwise be
+    // created inside the folder being moved. win32 `relative` ignores case.
+    const insideSource = path.relative(source.realTargetPath, destinationPath);
+    if (insideSource !== "" && !insideSource.startsWith("..") && !path.isAbsolute(insideSource)) {
+      return yield* operationError(
+        "rename",
+        destinationPath,
+      )(new Error("A folder cannot be moved inside itself."));
+    }
+
+    const destinationDirectory = path.dirname(destinationPath);
+    yield* fileSystem
+      .makeDirectory(destinationDirectory, { recursive: true })
+      .pipe(Effect.mapError(operationError("make-directory", destinationDirectory)));
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.rename(source.realTargetPath, destinationPath),
+      catch: operationError("rename", destinationPath),
+    });
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: destination.relativePath };
+  });
+
+  const deleteEntry: WorkspaceFileSystem["Service"]["deleteEntry"] = Effect.fn(
+    "WorkspaceFileSystem.deleteEntry",
+  )(function* (input) {
+    yield* knownWorkspaces.assertContains(input.cwd);
+    const target = yield* resolveWriteTarget(input);
+    // Removes the entry as named: a symlink is unlinked, never followed into its target.
+    yield* Effect.tryPromise({
+      try: () => NodeFSP.rm(target.namedTargetPath, { recursive: true }),
+      catch: (cause) =>
+        new WorkspaceFileSystemOperationError({
+          workspaceRoot: input.cwd,
+          relativePath: input.relativePath,
+          resolvedPath: target.realTargetPath,
+          operationPath: target.namedTargetPath,
+          operation: "delete",
+          cause,
+        }),
+    });
+    yield* workspaceEntries.refresh(input.cwd);
+    return { relativePath: target.relativePath };
+  });
+
+  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile, renameEntry, deleteEntry });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

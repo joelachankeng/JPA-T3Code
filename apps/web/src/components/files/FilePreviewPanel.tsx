@@ -141,6 +141,12 @@ interface FilePreviewPanelProps {
   revealPath?: string | null;
   /** Moves this folder browser to another folder in place; see `navigateFolder`. */
   onNavigateFolder: (relativePath: string, folderTrail: string, keepSource: boolean) => void;
+  /** Retargets the open tabs under a path the tree renamed. */
+  onPathRenamed: (fromPath: string, toPath: string) => void;
+  /** Closes the open tabs under a path the tree deleted. */
+  onPathDeleted: (relativePath: string) => void;
+  /** Tabs whose edits have not been saved yet, as `file:<path>` ids. */
+  pendingFileSurfaceIds: ReadonlySet<string>;
   /** The deeper path breadcrumbs keep after the browser moved up; see `navigateFolder`. */
   folderTrail: string | undefined;
   onPendingChange: (relativePath: string, pending: boolean) => void;
@@ -1007,6 +1013,9 @@ export default function FilePreviewPanel({
   onOpenTimeline,
   revealPath = null,
   onNavigateFolder,
+  onPathRenamed,
+  onPathDeleted,
+  pendingFileSurfaceIds,
   folderTrail,
   onPendingChange,
   selectedFilePending,
@@ -1546,6 +1555,9 @@ export default function FilePreviewPanel({
               selectedPathRevealId={revealRequestId}
               onOpenFile={onOpenFile}
               onOpenTimeline={onOpenTimeline}
+              onPathRenamed={onPathRenamed}
+              onPathDeleted={onPathDeleted}
+              pendingFileSurfaceIds={pendingFileSurfaceIds}
               workspaceMutationId={workspaceMutationId}
               {...(previewPath && !isMedia && !isPdf
                 ? { onRefreshSelectedFile: file.refresh }

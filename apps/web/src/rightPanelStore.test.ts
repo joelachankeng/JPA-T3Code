@@ -85,6 +85,46 @@ describe("rightPanelStore", () => {
     expect(useClosedViewStore.getState().entries).toEqual([]);
   });
 
+  it("retargets renamed files' tabs in place and keeps the active one active", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "docs/old.md");
+    store.openFile(refA, "src/app.ts");
+    store.openFile(refA, "src/lib/util.ts");
+    store.openFile(refA, "srcs/other.ts");
+    store.activateSurface(refA, "file:docs/old.md");
+    store.renameFilePath(refA, "docs/old.md", "docs/new.md");
+    store.renameFilePath(refA, "src", "source");
+    store.renameFilePath(refA, "docs/never-open.md", "docs/other.md");
+
+    const state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual([
+      "file:docs/new.md",
+      "file:source/app.ts",
+      "file:source/lib/util.ts",
+      "file:srcs/other.ts",
+    ]);
+    expect(state.activeSurfaceId).toBe("file:docs/new.md");
+  });
+
+  it("closes deleted files' tabs and falls back to the Files tree when none are left", () => {
+    const store = useRightPanelStore.getState();
+    store.openFile(refA, "docs/a.md");
+    store.openFile(refA, "docs/guides/b.md");
+    store.openFile(refA, "src/app.ts");
+    store.activateSurface(refA, "file:docs/guides/b.md");
+    store.closeFilePath(refA, "docs");
+
+    let state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["file:src/app.ts"]);
+    expect(state.activeSurfaceId).toBe("file:src/app.ts");
+
+    store.closeFilePath(refA, "src/app.ts");
+    state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.map((surface) => surface.id)).toEqual(["files"]);
+    expect(state.activeSurfaceId).toBe("files");
+    expect(state.isOpen).toBe(true);
+  });
+
   it("ignores session tabs without browser snapshots and records the empty browser tab", () => {
     const store = useRightPanelStore.getState();
     store.openBrowser(refA, "tab-1");

@@ -671,4 +671,186 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
   });
+
+  describe("renameEntry", () => {
+    it.effect("moves a file, creating the folders it lands in", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "docs/guide.md", "# Guide\n");
+        yield* workspaceEntries.list({ cwd });
+
+        const result = yield* workspaceFileSystem.renameEntry({
+          cwd,
+          relativePath: "docs/guide.md",
+          nextRelativePath: "docs/archive/old-guide.md",
+        });
+
+        expect(result).toEqual({ relativePath: "docs/archive/old-guide.md" });
+        expect(yield* fileSystem.readFileString(path.join(cwd, "docs/archive/old-guide.md"))).toBe(
+          "# Guide\n",
+        );
+        expect(yield* fileSystem.exists(path.join(cwd, "docs/guide.md"))).toBe(false);
+        const entries = (yield* workspaceEntries.list({ cwd })).entries.map((entry) => entry.path);
+        expect(entries).toContain("docs/archive/old-guide.md");
+        expect(entries).not.toContain("docs/guide.md");
+      }),
+    );
+
+    it.effect("refuses to replace an existing file", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "a.md", "a\n");
+        yield* writeTextFile(cwd, "b.md", "b\n");
+
+        const error = yield* workspaceFileSystem
+          .renameEntry({ cwd, relativePath: "a.md", nextRelativePath: "b.md" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspacePathExistsError);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "a.md"))).toBe("a\n");
+        expect(yield* fileSystem.readFileString(path.join(cwd, "b.md"))).toBe("b\n");
+      }),
+    );
+
+    it.effect("changes only the casing of a name", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "readme.md", "hi\n");
+
+        yield* workspaceFileSystem.renameEntry({
+          cwd,
+          relativePath: "readme.md",
+          nextRelativePath: "README.md",
+        });
+
+        expect(yield* fileSystem.readDirectory(cwd)).toEqual(["README.md"]);
+      }),
+    );
+
+    it.effect("renames a folder with everything inside it", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "docs/guides/intro.md", "intro\n");
+
+        yield* workspaceFileSystem.renameEntry({
+          cwd,
+          relativePath: "docs",
+          nextRelativePath: "manual",
+        });
+
+        expect(yield* fileSystem.readFileString(path.join(cwd, "manual/guides/intro.md"))).toBe(
+          "intro\n",
+        );
+        expect(yield* fileSystem.exists(path.join(cwd, "docs"))).toBe(false);
+      }),
+    );
+
+    it.effect("refuses to move a folder inside itself without touching it", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "docs/guide.md");
+
+        const error = yield* workspaceFileSystem
+          .renameEntry({ cwd, relativePath: "docs", nextRelativePath: "docs/sub/docs" })
+          .pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFileSystemOperationError);
+        expect(yield* fileSystem.readDirectory(path.join(cwd, "docs"))).toEqual(["guide.md"]);
+      }),
+    );
+
+    it.effect("refuses destinations outside the workspace", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "docs/guide.md");
+
+        const escapeError = yield* workspaceFileSystem
+          .renameEntry({ cwd, relativePath: "docs/guide.md", nextRelativePath: "../guide.md" })
+          .pipe(Effect.flip);
+        const gitError = yield* workspaceFileSystem
+          .renameEntry({ cwd, relativePath: "docs/guide.md", nextRelativePath: ".git/hooks/x" })
+          .pipe(Effect.flip);
+
+        expect(escapeError).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        expect(gitError).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+      }),
+    );
+  });
+
+  describe("deleteEntry", () => {
+    it.effect("deletes a file and a folder with its contents", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "README.md");
+        yield* writeTextFile(cwd, "docs/guides/intro.md");
+        yield* writeTextFile(cwd, "src/index.ts");
+        yield* workspaceEntries.list({ cwd });
+
+        yield* workspaceFileSystem.deleteEntry({ cwd, relativePath: "README.md" });
+        yield* workspaceFileSystem.deleteEntry({ cwd, relativePath: "docs" });
+
+        expect(yield* fileSystem.readDirectory(cwd)).toEqual(["src"]);
+        const entries = (yield* workspaceEntries.list({ cwd })).entries.map((entry) => entry.path);
+        expect(entries).not.toContain("docs/guides/intro.md");
+      }),
+    );
+
+    it.effect("refuses the workspace root, paths outside it, and git's folder", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, ".git/HEAD", "ref: refs/heads/main\n");
+
+        for (const relativePath of [".", "docs/..", "../outside"]) {
+          const error = yield* workspaceFileSystem
+            .deleteEntry({ cwd, relativePath })
+            .pipe(Effect.flip);
+          expect(error).toBeInstanceOf(WorkspacePaths.WorkspacePathOutsideRootError);
+        }
+        const gitError = yield* workspaceFileSystem
+          .deleteEntry({ cwd, relativePath: ".git" })
+          .pipe(Effect.flip);
+
+        expect(gitError).toBeInstanceOf(WorkspaceFileSystem.WorkspaceFilePathEscapeError);
+        expect(yield* fileSystem.exists(path.join(cwd, ".git/HEAD"))).toBe(true);
+      }),
+    );
+
+    it.effect.skipIf(!symlinksSupported)("unlinks a symlink without touching its target", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "shared/config.md", "keep\n");
+        yield* fileSystem.symlink(path.join(cwd, "shared"), path.join(cwd, "link"));
+
+        yield* workspaceFileSystem.deleteEntry({ cwd, relativePath: "link" });
+
+        expect(yield* fileSystem.exists(path.join(cwd, "link"))).toBe(false);
+        expect(yield* fileSystem.readFileString(path.join(cwd, "shared/config.md"))).toBe("keep\n");
+      }),
+    );
+  });
 });

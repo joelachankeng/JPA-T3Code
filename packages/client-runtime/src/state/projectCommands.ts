@@ -70,6 +70,17 @@ function writtenFilePaths(
   );
 }
 
+function renamedFilePaths(
+  input: EnvironmentRpcInput<typeof WS_METHODS.projectsRenameEntry>,
+  result: EnvironmentRpcSuccess<typeof WS_METHODS.projectsRenameEntry>,
+) {
+  return new Set(
+    [input.relativePath, input.nextRelativePath, result.relativePath].map((path) =>
+      resolveWorkspaceFilePath(path, input.cwd),
+    ),
+  );
+}
+
 export class ScratchProjectNotLoadedError extends Schema.TaggedError<ScratchProjectNotLoadedError>()(
   "ScratchProjectNotLoadedError",
   { projectId: ProjectId },
@@ -220,6 +231,49 @@ export function createProjectEnvironmentAtoms<R, E>(
           for (const path of writtenFilePaths(input, result))
             fileMetadata.refreshPath(environmentId, path, registry);
         }),
+    }),
+    renameEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:rename-entry",
+      tag: WS_METHODS.projectsRenameEntry,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.cwd}`,
+      },
+      execute: (input) =>
+        requestGuarded(WS_METHODS.projectsRenameEntry, input).pipe(
+          Effect.tap((result) =>
+            Effect.forEach(renamedFilePaths(input, result), fileMetadata.invalidate),
+          ),
+        ),
+      onSuccess: ({ environmentId, input }, registry, result) =>
+        Effect.sync(() => {
+          for (const path of renamedFilePaths(input, result))
+            fileMetadata.refreshPath(environmentId, path, registry);
+        }),
+    }),
+    deleteEntry: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:projects:delete-entry",
+      tag: WS_METHODS.projectsDeleteEntry,
+      scheduler: fileScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId, input }) => `${environmentId}:${input.cwd}`,
+      },
+      execute: (input) =>
+        requestGuarded(WS_METHODS.projectsDeleteEntry, input).pipe(
+          Effect.tap(() =>
+            fileMetadata.invalidate(resolveWorkspaceFilePath(input.relativePath, input.cwd)),
+          ),
+        ),
+      onSuccess: ({ environmentId, input }, registry) =>
+        Effect.sync(() =>
+          fileMetadata.refreshPath(
+            environmentId,
+            resolveWorkspaceFilePath(input.relativePath, input.cwd),
+            registry,
+          ),
+        ),
     }),
   };
 }

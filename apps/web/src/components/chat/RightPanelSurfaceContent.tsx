@@ -258,6 +258,13 @@ export function RightPanelSurfaceContent(props: {
                 .getState()
                 .navigateFolder(threadRef, surface.id, relativePath, folderTrail, keepSource)
             }
+            onPathRenamed={(fromPath, toPath) =>
+              useRightPanelStore.getState().renameFilePath(threadRef, fromPath, toPath)
+            }
+            onPathDeleted={(relativePath) =>
+              useRightPanelStore.getState().closeFilePath(threadRef, relativePath)
+            }
+            pendingFileSurfaceIds={files.pendingSurfaceIds}
             folderTrail={surface.folderTrail}
             onPendingChange={files.onPendingChange}
             selectedFilePending={surface.kind === "file" && files.pendingSurfaceIds.has(surface.id)}
