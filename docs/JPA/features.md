@@ -50,6 +50,7 @@ After a merge, grep for each one and confirm it is still there.
 | `sourceControlPanel: true` capability                                                                             | `apps/server/src/environment/ServerEnvironment.ts`, `packages/contracts/src/environment.ts`  | Surface reports the environment is too old                                                                       |
 | `scm.*` and `projects.renameEntry` / `deleteEntry` scopes                                                         | `apps/server/src/auth/RpcAuthorization.ts`, `packages/contracts/src/clientRpcPermissions.ts` | Requests are refused as unauthorized                                                                             |
 | Mocked `resolveFileContextMenuAbsolutePath`                                                                       | `apps/web/src/components/files/FileBrowserPanel.browser.test.tsx`                            | Upstream rewrites this test; without the mock it fails to load                                                   |
+| `wordWrapOverrideAtom` in place of the `wordWrapOverride` `useState`                                              | `apps/web/src/components/files/FilePreviewPanel.tsx`                                         | Line wrap resets to the default on every thread switch                                                           |
 
 **Why the server has a separate scm RPC group:** one group holding every method exceeds
 TypeScript's type instantiation depth limit. Upstream has its own split (`SplitWsRpcGroup`
@@ -276,6 +277,28 @@ mounts.
 
 - [ ] `installComposedRangesCompat()` is still called in `startAppServices`.
 - [ ] When possible, type into a file on an iPhone or iPad.
+
+## Line wrap in the file viewer persists
+
+**What it does:** the file viewer's line wrap toggle keeps its state for each thread. Switching
+to another thread and back, or to another surface on the same thread (diff, browser, source
+control) and back to the file, leaves wrap as you set it. Each thread has its own setting;
+a thread you have never toggled uses the **Word wrap** setting.
+
+**How it works:** upstream kept the toggle in component state, so it reset to the default
+whenever the panel remounted, which happens on every thread switch. The fork moves it into
+`wordWrapOverrideAtom`, an atom family keyed by `scopedThreadKey` and kept alive. It lives in
+memory only, so a reload falls back to the Settings default.
+
+**References:** `wordWrapOverrideAtom` in `apps/web/src/components/files/FilePreviewPanel.tsx`.
+
+**Verify**
+
+- [ ] Open a file on thread A and turn wrap on. Switch to thread B, then back to thread A:
+      the file is still wrapped.
+- [ ] On thread A, open another surface (diff or browser), then return to the file: still
+      wrapped.
+- [ ] Thread B's file viewer still uses the Settings default.
 
 ## Fork branding
 

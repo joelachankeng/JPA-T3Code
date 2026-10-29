@@ -77,6 +77,8 @@ import { previewEnvironment } from "~/state/preview";
 import { serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { appAtomRegistry } from "~/rpc/atomRegistry";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 
 import { AttachmentFilePreview } from "./AttachmentFilePreview";
@@ -132,6 +134,14 @@ import {
 } from "./projectFilesQueryState";
 
 const NO_FILE_REVISION_ATOM = Atom.make(null);
+
+// Outlives the panel, which remounts on every thread switch.
+const wordWrapOverrideAtom = Atom.family((threadKey: string) =>
+  Atom.make<boolean | null>(null).pipe(
+    Atom.keepAlive,
+    Atom.withLabel(`files:word-wrap:${threadKey}`),
+  ),
+);
 
 interface FilePreviewPanelProps {
   environmentId: EnvironmentId;
@@ -1029,8 +1039,8 @@ export default function FilePreviewPanel({
   const draft = typeof composerDraftTarget === "string";
   const { resolvedTheme } = useTheme();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
-  const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
-  const wordWrap = wordWrapOverride ?? defaultWordWrap;
+  const wordWrapOverrideState = wordWrapOverrideAtom(scopedThreadKey(threadRef));
+  const wordWrap = useAtomValue(wordWrapOverrideState) ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const remoteOpenState = useRemoteOpenState(environmentId);
@@ -1370,7 +1380,7 @@ export default function FilePreviewPanel({
             <FileSurfaceAction
               label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
               pressed={wordWrap}
-              onPress={() => setWordWrapOverride(!wordWrap)}
+              onPress={() => appAtomRegistry.set(wordWrapOverrideState, !wordWrap)}
             >
               <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
