@@ -64,8 +64,10 @@ this commit.
 
 ## 2. Shell setup for the builds
 
-The single-executable build needs Node 25.7 or newer, and nvm on the host stops
-at 24.x. Download a standalone build into a scratch directory instead of
+The Windows single-executable build is a cross-target build (`--target win-x64`):
+it needs a Node 25.7 or newer host and downloads the exact Node from the root
+`package.json` `engines` (26.12.1 for 0.0.49) to embed. nvm on the host stops at
+24.x, so download a standalone build into a scratch directory instead of
 installing it:
 
 ```powershell
@@ -133,46 +135,57 @@ node scripts/build-cli-archive.ts --platform win --arch x64 --version <version> 
 Success line: `Wrote release-cli\t3-<version>-win32-x64.zip`. The message
 `Windows signing disabled (missing Azure Trusted Signing)` is expected.
 
-### Linux archive, executable from PowerShell and archive from Git Bash
+### Linux archive, inside WSL
 
-```powershell
-cd apps\server; node scripts/cli.ts build-exe --target linux-x64; cd ..\..
-```
+Build the Linux archive on Linux, in WSL (Ubuntu 22.04). Since 0.0.49 the
+archive step bundles `libatomic.so.1` with `ldd`, `dpkg-query` and `patchelf`,
+which do not exist in Git Bash. Building natively also gives the archive real
+executable bits, which NTFS cannot store.
 
-The archive step passes GNU tar's `--hard-dereference`, which Windows' own tar
-rejects, so run it from Git Bash. Git Bash's tar in turn reads `C:\...` as a
-remote host unless `TAR_OPTIONS` says otherwise.
+WSL holds a clone of this repository at `~/t3-build` (its `origin` is
+`/mnt/c/Repo/JPA/JPA-T3Code`) and the tools in `~/t3-tools`:
+
+- `node-v26.12.1-linux-x64/`: the exact Node from the root `package.json`
+  `engines`, which a native `build-exe` requires. Download it from nodejs.org
+  and check it against `SHASUMS256.txt` when `engines` changes.
+- `patchelf/`: unpacked without sudo (sudo in WSL asks for a password) by
+  `apt-get download patchelf && dpkg -x patchelf_*.deb patchelf`.
+
+Run each step as a script file through `wsl.exe -- bash -l <script>` rather than
+inline, because PowerShell mangles quoting in a nested `bash -c`.
 
 ```sh
-export PATH="/c/Users/JPA/AppData/Local/Temp/t3-build-node25/node-v25.9.0-win-x64:/c/Repo/JPA/JPA-T3Code/node_modules/.bin:$PATH"
-export TAR_OPTIONS="--force-local"
+export PATH="$HOME/t3-tools/node-v26.12.1-linux-x64/bin:$HOME/t3-tools/patchelf/usr/bin:$HOME/t3-build/node_modules/.bin:$PATH"
+cd ~/t3-build
+git fetch origin && git checkout --detach <release commit sha>
+npx -y pnpm@<packageManager version> install --frozen-lockfile   # once per release
+# Reuse the server bundle and client the desktop build just made on Windows.
+rm -rf apps/server/dist && cp -r /mnt/c/Repo/JPA/JPA-T3Code/apps/server/dist apps/server/dist
+find apps/server/dist -type d -exec chmod 755 {} + && find apps/server/dist -type f -exec chmod 644 {} +
+(cd apps/server && node scripts/cli.ts build-exe)
 node scripts/build-cli-archive.ts --platform linux --arch x64 --version <version> \
-  --resource-monitor-dir "C:\\path\\to\\resource-monitor"
+  --resource-monitor-dir <dir containing linux-x64/t3-resource-monitor>
+cp release-cli/t3-<version>-linux-x64.tar.gz /mnt/c/Repo/JPA/JPA-T3Code/release-cli/
 ```
 
-Success line: `Wrote release-cli\t3-<version>-linux-x64.tar.gz`.
+Success lines: `Bundled /lib/x86_64-linux-gnu/libatomic.so.1 as lib/libatomic.so.1`
+and `Wrote release-cli/t3-<version>-linux-x64.tar.gz`. The `chmod` matters: files
+copied from `/mnt/c` all read as executable, and without it every client asset
+ships as mode 777.
 
-### Restore the executable bits in the Linux archive
-
-NTFS has no executable bit, so the archive comes out with `t3` and the resource
-monitor at mode 644. The checksum still passes, and the remote then fails its
-own `t3 --version` probe with "executable does not run on this host". Check
-every Linux archive:
+Check the archive before publishing. `t3` and the resource monitor must be
+`-rwxr-xr-x`, `lib/libatomic.so.1` must be present, and the extracted `t3` must
+print the new version:
 
 ```sh
-tar -tvzf release-cli/t3-<version>-linux-x64.tar.gz | grep -E "/t3$|t3-resource-monitor$"
+tar -tvzf release-cli/t3-<version>-linux-x64.tar.gz | grep -E "/t3$|t3-resource-monitor$|libatomic"
+tar -tvzf release-cli/t3-<version>-linux-x64.tar.gz | grep "^-rwx" | awk '{print $NF}'
 ```
 
-Both lines must start with `-rwxr-xr-x`. If they do not, rewrite the modes
-inside the archive with Python's `tarfile` (set `member.mode = 0o755` while
-copying each member to a new `w:gz` archive); `chmod` on an extracted copy has
-no effect on this host. The set of executable entries should match the previous
-release, which for 0.0.46 was `t3`, the resource monitor, and seven `.node`
-files under `node_modules`. Compare with:
-
-```sh
-tar -tvzf <archive> | grep "^-rwx" | awk '{print $NF}'
-```
+For 0.0.49 the executable entries were `t3`, the resource monitor, `rg` and
+`cursorsandbox` under `@cursor/sdk-linux-x64/bin`, and playwright-core's scripts.
+Native `.node` files are 644, as a Linux install leaves them; they are loaded,
+not executed.
 
 ### Checksums
 
