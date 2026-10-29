@@ -33,7 +33,7 @@ export interface FileFindMatch {
  * Enough to navigate a pathological query without freezing the surface. A
  * reader who needs more than this is refining the query, not reading matches.
  */
-export const MAX_FILE_FIND_MATCHES = 10_000;
+const MAX_FILE_FIND_MATCHES = 10_000;
 
 const WORD_SEPARATORS = "`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?";
 
@@ -44,7 +44,7 @@ function isSeparator(text: string, index: number): boolean {
 }
 
 /** Whether a match sits on word boundaries, for the whole-word toggle. */
-export function isWholeWord(text: string, start: number, length: number): boolean {
+function isWholeWord(text: string, start: number, length: number): boolean {
   return isSeparator(text, start - 1) && isSeparator(text, start + length);
 }
 

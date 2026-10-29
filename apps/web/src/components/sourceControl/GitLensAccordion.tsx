@@ -1,12 +1,6 @@
-/**
- * The GitLens accordion.
- *
- * GitLens groups a set of related views into one section of the Source Control
- * container and switches between them from the section header. This rebuilds
- * that grouping — Commits, Branches, Remotes, Stashes, Tags, Worktrees,
- * Contributors and File History — over T3 Code's own git service. It is a
- * reimplementation of the accordion's behaviour, not a port of GitLens code.
- */
+// Rebuilds GitLens's grouped views (Commits, Branches, Remotes, Stashes, Tags,
+// Worktrees, Contributors, File History) over T3 Code's own git service. A
+// reimplementation of the accordion's behaviour, not a port of GitLens code.
 import type {
   ScmBranchNode,
   ScmCommit,
@@ -37,9 +31,9 @@ import { useScmContextMenu } from "./useScmContextMenu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
-import { formatScmAbsoluteTime, formatScmRelativeTime } from "./sourceControlPanel.logic";
+import { formatScmRelativeTime } from "./sourceControlPanel.logic";
 
-export const GITLENS_VIEWS = [
+const GITLENS_VIEWS = [
   { id: "commits", label: "Commits", icon: GitCommitHorizontal },
   { id: "branches", label: "Branches", icon: GitBranch },
   { id: "remotes", label: "Remotes", icon: Cloud },
@@ -74,12 +68,12 @@ function Row(props: {
         {props.title}
       </span>
       {props.detail ? (
-        <span className="min-w-0 shrink truncate text-[11px] text-muted-foreground">
+        <span className="min-w-0 shrink truncate text-2xs text-muted-foreground">
           {props.detail}
         </span>
       ) : null}
       {props.trailing ? (
-        <span className="ml-auto shrink-0 pl-2 text-[11px] text-muted-foreground tabular-nums">
+        <span className="ml-auto shrink-0 pl-2 text-2xs text-muted-foreground tabular-nums">
           {props.trailing}
         </span>
       ) : null}
@@ -184,10 +178,10 @@ function BranchRow(props: { readonly branch: ScmBranchNode; readonly onCheckout:
         {branch.name}
       </span>
       {track ? (
-        <span className="shrink-0 text-[10px] text-muted-foreground tabular-nums">{track}</span>
+        <span className="shrink-0 text-3xs text-muted-foreground tabular-nums">{track}</span>
       ) : null}
       {branch.worktreePath ? <TreePalm className="size-3 shrink-0 text-muted-foreground" /> : null}
-      <span className="ml-auto shrink-0 pl-2 text-[11px] text-muted-foreground tabular-nums">
+      <span className="ml-auto shrink-0 pl-2 text-2xs text-muted-foreground tabular-nums">
         {formatScmRelativeTime(branch.authorDate)}
       </span>
     </button>
@@ -223,7 +217,7 @@ function StashRow(props: {
     >
       <Inbox className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="min-w-0 shrink truncate text-foreground/90 text-xs">{props.label}</span>
-      <span className="ml-auto shrink-0 pl-2 text-[11px] text-muted-foreground tabular-nums">
+      <span className="ml-auto shrink-0 pl-2 text-2xs text-muted-foreground tabular-nums">
         {formatScmRelativeTime(props.date)}
       </span>
     </button>
@@ -267,13 +261,13 @@ export function GitLensAccordion(props: GitLensAccordionProps) {
   return (
     <div className="flex min-w-0 flex-col">
       <div className="flex items-center gap-0.5 px-2 pb-1">
-        <span className="shrink-0 pr-1 font-medium text-[11px] text-muted-foreground uppercase tracking-wide">
+        <span className="shrink-0 pr-1 font-medium text-2xs text-muted-foreground uppercase tracking-wide">
           {active.id === "file-history" && props.fileHistoryIsFolder
             ? "Folder History"
             : active.label}
         </span>
         {props.status.repository.branch ? (
-          <span className="min-w-0 shrink truncate text-[11px] text-muted-foreground">
+          <span className="min-w-0 shrink truncate text-2xs text-muted-foreground">
             {props.status.repository.branch}
           </span>
         ) : null}
@@ -406,7 +400,7 @@ export function GitLensAccordion(props: GitLensAccordionProps) {
                 </span>
                 {props.fileHistoryPinned ? (
                   <>
-                    <span className="shrink-0 text-[11px] text-muted-foreground">(pinned)</span>
+                    <span className="shrink-0 text-2xs text-muted-foreground">(pinned)</span>
                     <span className="min-w-0 flex-1" />
                     <Tooltip>
                       <TooltipTrigger
@@ -552,18 +546,4 @@ export function GitLensAccordion(props: GitLensAccordionProps) {
       )}
     </div>
   );
-}
-
-/** Long-form hover text for a commit, matching GitLens's card. */
-export function commitHoverText(commit: ScmCommit): string {
-  return [
-    `${commit.authorName} · ${formatScmRelativeTime(commit.authorDate)} (${formatScmAbsoluteTime(commit.authorDate)})`,
-    commit.shortSha,
-    "",
-    commit.subject,
-    commit.body,
-  ]
-    .filter((line) => line !== undefined)
-    .join("\n")
-    .trim();
 }

@@ -8,7 +8,6 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
-  ScmCommitDetailResult,
   ScmDiffInput,
   ScmDiffResult,
   ScmLogInput,
@@ -21,7 +20,6 @@ import type {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
-import { useCallback } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { sourceControlPanel } from "~/state/sourceControlPanel";
@@ -42,12 +40,11 @@ function describe(result: AsyncResult.AsyncResult<unknown, unknown>): string | n
 function useScmQuery<A>(atom: Parameters<typeof useAtomValue>[0]): ScmQueryState<A> {
   const result = useAtomValue(atom) as AsyncResult.AsyncResult<A, unknown>;
   const refreshAtom = useAtomRefresh(atom);
-  const refresh = useCallback(() => refreshAtom(), [refreshAtom]);
   return {
     data: Option.getOrNull(AsyncResult.value(result)) as A | null,
     error: describe(result),
     isPending: result.waiting,
-    refresh,
+    refresh: refreshAtom,
   };
 }
 
@@ -82,20 +79,6 @@ export function useScmView(
     sourceControlPanel.view({
       environmentId: target.environmentId,
       input: { cwd: target.cwd, ...input },
-    }),
-  );
-}
-
-export function useScmCommitDetail(
-  target: ScmTarget,
-  sha: string | null,
-): ScmQueryState<ScmCommitDetailResult> {
-  // An empty sha would still be a valid atom key, so the caller's "nothing
-  // selected" state is expressed by never subscribing to a real request.
-  return useScmQuery<ScmCommitDetailResult>(
-    sourceControlPanel.commitDetail({
-      environmentId: target.environmentId,
-      input: { cwd: target.cwd, sha: sha ?? "HEAD" },
     }),
   );
 }

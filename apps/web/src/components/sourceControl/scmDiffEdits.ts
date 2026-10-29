@@ -1,21 +1,12 @@
-/**
- * Whether a source control diff is holding edits nobody has written yet.
- *
- * The panel owns the editor, but the control that closes the panel lives in
- * the chat view, so the two meet here rather than threading a flag up through
- * the right panel's surface plumbing. The panel clears this when the edits are
- * saved, cleared, or the diff is closed.
- */
+// Whether a source control diff holds unsaved edits. The panel owns the editor but
+// the chat view owns the close control, so they meet here instead of threading a
+// flag through the right panel. The panel clears it on save, clear, or close.
 const UNSAVED_SCM_DIFF_MESSAGE = "Discard your unsaved changes to this file?";
 
 let unsaved = false;
 
 export function setScmDiffUnsaved(value: boolean): void {
   unsaved = value;
-}
-
-export function hasScmDiffUnsaved(): boolean {
-  return unsaved;
 }
 
 /**

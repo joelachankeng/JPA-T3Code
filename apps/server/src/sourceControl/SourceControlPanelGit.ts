@@ -1,11 +1,6 @@
-/**
- * Parsers for the git plumbing the Source Control surface reads.
- *
- * These are pure so the shapes the panel depends on — porcelain v2 records,
- * `%x1e`-delimited log records, NUL-separated name-status and numstat blocks —
- * are testable without spawning git. Everything that touches a process lives in
- * SourceControlPanelService.
- */
+// Pure parsers for the git plumbing the Source Control surface reads, so porcelain
+// v2, `%x1e`-delimited log and NUL-separated name-status/numstat shapes are testable
+// without spawning git. Process work lives in SourceControlPanelService.
 import type {
   ScmCommit,
   ScmCommitRef,
@@ -22,19 +17,9 @@ export const LOG_FIELD_SEPARATOR = "";
  * Fields in the order `parseLogRecords` expects. `%b` stays last because a
  * body is the only field that can contain newlines.
  */
-export const LOG_FORMAT = [
-  "%H",
-  "%h",
-  "%P",
-  "%an",
-  "%ae",
-  "%aI",
-  "%cn",
-  "%cI",
-  "%D",
-  "%s",
-  "%b",
-].join(LOG_FIELD_SEPARATOR);
+const LOG_FORMAT = ["%H", "%h", "%P", "%an", "%ae", "%aI", "%cn", "%cI", "%D", "%s", "%b"].join(
+  LOG_FIELD_SEPARATOR,
+);
 
 export const LOG_FORMAT_ARG = `${LOG_RECORD_SEPARATOR}${LOG_FORMAT}`;
 
@@ -64,7 +49,7 @@ function fileState(code: string): ScmFileState {
 }
 
 /** `git diff --name-status` prefixes renames and copies with a similarity score. */
-export function nameStatusState(code: string): ScmFileState {
+function nameStatusState(code: string): ScmFileState {
   return fileState(code.charAt(0).toUpperCase());
 }
 

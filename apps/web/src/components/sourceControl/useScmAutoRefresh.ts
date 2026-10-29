@@ -1,21 +1,12 @@
-/**
- * Keeping the Source Control surface current.
- *
- * Changes arrive from three directions: this panel's own mutations, an agent
- * working in the thread, and the user editing in another editor entirely. The
- * first two already push a refresh. This covers the third.
- *
- * It polls rather than watching the repository directory. A recursive watch is
- * cheap on Windows and macOS, where the OS reports a whole tree from one
- * handle, but on Linux Node adds an inotify watch per directory, and a repo
- * with a `node_modules` can exhaust `max_user_watches` and fail the whole
- * subscription. A `git status` on a warm repository costs tens of milliseconds,
- * so a poll that stops whenever the surface is not on screen is the cheaper
- * trade for a remote-first app.
- */
-import { useEffect, useRef, useState } from "react";
+// Catches edits made outside T3 Code; panel mutations and agent turns already push a
+// refresh. Polls instead of watching: Linux adds an inotify watch per directory, and a
+// repo with node_modules can exhaust max_user_watches. A warm `git status` costs tens
+// of milliseconds, and the poll stops while the surface is off screen.
+import { useEffect, useState } from "react";
 
-export const SCM_REFRESH_INTERVAL_MS = 5_000;
+import { useStableCallback } from "~/hooks/useStableCallback";
+
+const SCM_REFRESH_INTERVAL_MS = 5_000;
 /**
  * A refresh that resolves faster than this never shows a spinner. Without the
  * gate the indicator would blink on every poll, which reads as the panel
@@ -29,14 +20,12 @@ export function useScmAutoRefresh(input: {
   readonly intervalMs?: number;
 }): void {
   // The callback changes every render; the interval should not restart with it.
-  const refreshRef = useRef(input.refresh);
-  useEffect(() => {
-    refreshRef.current = input.refresh;
-  });
+  const refresh = useStableCallback(input.refresh);
 
   const interval = input.intervalMs ?? SCM_REFRESH_INTERVAL_MS;
   const enabled = input.enabled;
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- runs the poll timer and focus/visibility listeners while the surface is enabled
   useEffect(() => {
     if (!enabled) return;
 
@@ -44,7 +33,7 @@ export function useScmAutoRefresh(input: {
       // A hidden tab is not worth a git process, and browsers throttle the
       // timer there anyway.
       if (document.visibilityState !== "visible") return;
-      refreshRef.current();
+      refresh();
     };
 
     const timer = window.setInterval(refreshIfVisible, interval);
@@ -61,7 +50,7 @@ export function useScmAutoRefresh(input: {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [enabled, interval]);
+  }, [enabled, interval, refresh]);
 }
 
 /**
@@ -76,6 +65,7 @@ export function useMinimumVisible(signal: number, durationMs = 450): boolean {
   // comparison rather than assigned, so the effect only ever writes on a timer.
   const [expiredSignal, setExpiredSignal] = useState(0);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds a timer that expires the indicator after its minimum duration
   useEffect(() => {
     // Zero is the initial value, not a refresh anyone asked for.
     if (signal === 0) return;
@@ -92,15 +82,14 @@ export function useMinimumVisible(signal: number, durationMs = 450): boolean {
  */
 export function useDelayedFlag(active: boolean, delayMs = INDICATOR_DELAY_MS): boolean {
   const [shown, setShown] = useState(false);
+  if (!active && shown) setShown(false);
 
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the timer that reveals the indicator once `active` has lasted `delayMs`
   useEffect(() => {
-    if (!active) {
-      setShown(false);
-      return;
-    }
+    if (!active) return;
     const timer = window.setTimeout(() => setShown(true), delayMs);
     return () => window.clearTimeout(timer);
   }, [active, delayMs]);
 
-  return shown;
+  return active && shown;
 }

@@ -1,12 +1,6 @@
-/**
- * Backend for the Source Control surface.
- *
- * The surface needs finer-grained git than the agent flows do — per-file
- * staging, a commit box, a graph, per-file history — so this service speaks
- * plumbing directly rather than going through GitManager's higher-level
- * actions. It runs every command through VcsProcess, which owns the spawn
- * concurrency limit, timeouts and output caps the rest of the server relies on.
- */
+// The Source Control surface needs finer-grained git than GitManager's actions
+// (per-file staging, commits, graph, history), so this speaks plumbing directly.
+// Every command goes through VcsProcess for its concurrency limit, timeouts and caps.
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -123,7 +117,7 @@ const EMPTY_STATUS = (): ScmStatusResult => ({
   truncated: false,
 });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const vcsProcess = yield* VcsProcess.VcsProcess;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -185,14 +179,9 @@ export const make = Effect.gen(function* () {
       maxOutputBytes: 4_096,
     }).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() || null : null)));
 
-  /**
-   * Pin a pathspec to the repository root.
-   *
-   * Every path on this wire comes from `git status --porcelain` or `git log`,
-   * both of which report from the repository root, while a bare pathspec is
-   * resolved against the process's working directory. Without this, a project
-   * rooted below the repository root matches nothing.
-   */
+  // Paths on this wire come from git status/log, which report from the repository
+  // root, but a bare pathspec resolves against the cwd. Without `:(top)` a project
+  // rooted below the repository root matches nothing.
   const topPath = (value: string) => `:(top)${value}`;
 
   const topPaths = (values: ReadonlyArray<string>) => values.map(topPath);
@@ -205,14 +194,9 @@ export const make = Effect.gen(function* () {
       maxOutputBytes: 4_096,
     }).pipe(Effect.map((result) => (result.exitCode === 0 ? result.stdout.trim() : "")));
 
-  /**
-   * Accept a path in either basis and return it relative to the repository root.
-   *
-   * The Source Control surface passes paths it read from git, which are already
-   * root-relative. The Files surface passes paths relative to the project's own
-   * directory. A path that resolves to something under `cwd` is the latter;
-   * anything else is taken as already root-relative.
-   */
+  // Source Control passes root-relative paths from git; Files passes paths relative
+  // to the project. A path that exists under `cwd` is the latter, anything else is
+  // taken as already root-relative.
   const resolveRepoPath = Effect.fn("Scm.resolveRepoPath")(function* (cwd: string, value: string) {
     const prefix = yield* showPrefix(cwd);
     if (prefix === "") return value;
@@ -414,9 +398,10 @@ export const make = Effect.gen(function* () {
           // `restore --staged` leaves the working tree alone; `reset` on an
           // unborn branch has no HEAD to reset against, so fall back there.
           yield* checked("Scm.unstage", input.cwd, ["restore", "--staged", ...pathArgs]).pipe(
-            Effect.catchTag("GitCommandError", () =>
-              checked("Scm.unstage.reset", input.cwd, ["reset", "-q", ...pathArgs]),
-            ),
+            Effect.catchTags({
+              GitCommandError: () =>
+                checked("Scm.unstage.reset", input.cwd, ["reset", "-q", ...pathArgs]),
+            }),
           );
           return;
         case "discard":
@@ -497,9 +482,10 @@ export const make = Effect.gen(function* () {
         const result = yield* checked("Scm.pull", input.cwd, ["pull", "--ff-only"], options).pipe(
           // A diverged branch cannot fast-forward; merging is what VS Code's
           // pull does next, and it is the behaviour users expect from the button.
-          Effect.catchTag("GitCommandError", () =>
-            checked("Scm.pull.merge", input.cwd, ["pull", "--no-rebase"], options),
-          ),
+          Effect.catchTags({
+            GitCommandError: () =>
+              checked("Scm.pull.merge", input.cwd, ["pull", "--no-rebase"], options),
+          }),
         );
         return { action: input.action, detail: summarize(result) };
       }
@@ -543,9 +529,10 @@ export const make = Effect.gen(function* () {
           ["pull", "--ff-only"],
           options,
         ).pipe(
-          Effect.catchTag("GitCommandError", () =>
-            checked("Scm.sync.pullMerge", input.cwd, ["pull", "--no-rebase"], options),
-          ),
+          Effect.catchTags({
+            GitCommandError: () =>
+              checked("Scm.sync.pullMerge", input.cwd, ["pull", "--no-rebase"], options),
+          }),
         );
         const pushed = yield* checked("Scm.sync.push", input.cwd, ["push"], options);
         return {
