@@ -216,6 +216,11 @@ curl -fsSL https://github.com/joelachankeng/JPA-T3Code/releases/download/v<versi
 
 ## 6. Upgrade the remotes
 
+This PC's remotes are all local Hyper-V VMs. Upgrade them with the script in
+[remote-vm-updates.md](../JPA/remote-vm-updates.md), which does the steps below
+for each one. The rest of this section is what it does, and how to upgrade a
+remote that is not one of those VMs.
+
 **SSH remotes** need no manual step. Turn the environment off and on in
 Settings → Connections, or restart the desktop app. It downloads the new
 archive and starts it.
