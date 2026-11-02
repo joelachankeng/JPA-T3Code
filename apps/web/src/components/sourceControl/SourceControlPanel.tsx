@@ -1,13 +1,7 @@
 /**
- * The Source Control surface.
- *
- * Three accordions: the working tree with its commit box, the commit graph,
- * and the GitLens grouped views last. Clicking a change opens its diff in
- * place, with a back control, because T3 Code's right panel is one surface
- * rather than an editor area VS Code can open a second tab in.
- *
- * Presentation state lives in a store rather than in this component, because
- * the panel unmounts whenever another surface is brought forward.
+ * The Source Control surface. A diff opens in place with a back control: the right panel is one
+ * surface, not an editor area that could take a second tab. Presentation state lives in a store
+ * because the panel unmounts whenever another surface is brought forward.
  */
 import { useAtomValue } from "@effect/atom-react";
 import type { FileDiffOptions } from "@pierre/diffs";
@@ -29,7 +23,7 @@ import {
   Save,
   Undo2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { DiffWorkerPoolProvider } from "~/components/DiffWorkerPoolProvider";
 import { Button } from "~/components/ui/button";
@@ -42,6 +36,7 @@ import { updateClientSettings, useClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getRenderablePatch, resolveDiffThemeName, resolveFileDiffPath } from "~/lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "~/lib/syntaxHighlighting";
+import { useStableCallback } from "~/hooks/useStableCallback";
 import { deepActiveElement, isEditableFocused } from "~/lib/editableFocus";
 import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
@@ -98,16 +93,6 @@ import {
 import { OUTDATED_ENVIRONMENT_MESSAGE } from "./sourceControlError";
 
 const GRAPH_PAGE_SIZE = 100;
-
-/**
- * Sweep for the refresh bar. Scoped to this component's own animation name so
- * it cannot collide with anything else, and only mounted while a refresh is
- * actually in flight.
- */
-const SCM_REFRESH_KEYFRAMES = `@keyframes scm-refresh {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(400%); }
-}`;
 
 /** What the in-panel diff view is currently showing. */
 type DiffSelection =
@@ -175,13 +160,9 @@ export interface SourceControlPanelProps {
 }
 
 /**
- * Gate the surface on the environment actually serving it.
- *
- * The `scm.*` methods arrived with this surface, so a server that predates it
- * rejects every one as an unknown method. The check lives out here, above the
- * panel's query hooks, because hooks cannot be skipped once mounted: asking
- * the environment once is what keeps the panel from rediscovering the same
- * answer through five failed requests on every refresh.
+ * Gate the surface on the environment serving it: an older server rejects every `scm.*` method.
+ * The check sits above the panel's query hooks so one capability read replaces five failed
+ * requests on every refresh.
  */
 export function SourceControlPanel(props: SourceControlPanelProps) {
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
@@ -218,10 +199,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   // and fill in defaults outside the selector. A selector that built a new
   // object on every read would never compare equal and re-render forever.
   const storedUi = useSourceControlUiStore((state) => state.byRepository[uiKey]);
-  const ui = useMemo(
-    () => selectScmUiState(storedUi ? { [uiKey]: storedUi } : {}, uiKey),
-    [storedUi, uiKey],
-  );
+  const ui = selectScmUiState(storedUi ? { [uiKey]: storedUi } : {}, uiKey);
   const updateUi = useSourceControlUiStore((state) => state.update);
   const toggleSection = useSourceControlUiStore((state) => state.toggleSection);
   const isOpen = (section: ScmSectionId) => !ui.collapsedSections.includes(section);
@@ -291,6 +269,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
   // rows then arrive out of view.
   const historyReady = fileHistory.data !== null && !fileHistory.isPending;
   const graphReady = log.data !== null && !log.isPending;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the DOM to a requested section once that section's data has rendered
   useEffect(() => {
     const section = pendingReveal.current;
     // Zero means nothing has asked for a reveal since the panel mounted.
@@ -303,7 +282,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
         ?.querySelector(`[data-scm-section="${section}"]`)
         ?.scrollIntoView({ block: "start", behavior: "smooth" }),
     );
-  }, [historyReady, graphReady, revealRequest]);
+  }, [historyReady, graphReady, revealRequest, pendingReveal, rootRef]);
   const commands = useScmCommands();
 
   // Each `refresh` is stable; the query-state objects around them are not, so
@@ -523,16 +502,15 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
 
   // The panel mirrors the editor's dirty flag into the module the chat view
   // reads, because the control that closes this panel lives over there.
-  const handleDirtyChange = useCallback((dirty: boolean) => {
+  const handleDirtyChange = useStableCallback((dirty: boolean) => {
     setDirtyEdit(dirty);
     setScmDiffUnsaved(dirty);
-  }, []);
-  const handleEditSession = useCallback((session: ScmEditSession | null) => {
+  });
+  const handleEditSession = useStableCallback((session: ScmEditSession | null) => {
     editSessionRef.current = session;
-  }, []);
+  });
 
-  // Leaving the surface behind must not leave the chat view thinking a diff
-  // still holds edits.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the chat view's module-level unsaved flag when this panel unmounts
   useEffect(() => () => setScmDiffUnsaved(false), []);
 
   /**
@@ -687,14 +665,14 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
    * The repository path the working tree side of this diff writes to, or null
    * when the diff ends at the index or at a commit and so has no file to edit.
    */
-  const editablePath = useMemo(() => {
+  const editablePath = (() => {
     if (!selection) return null;
     if (selection.kind === "working") return selection.staged ? null : selection.entry.path;
     if (selection.kind === "compare") return selection.path;
     return null;
-  }, [selection]);
+  })();
 
-  const diffInput: Omit<ScmDiffInput, "cwd"> | null = useMemo(() => {
+  const diffInput = ((): Omit<ScmDiffInput, "cwd"> | null => {
     if (!selection || selection.kind === "head") return null;
     // Whole-file text is fetched only to open the editor; a read-only diff
     // renders from the patch alone.
@@ -724,30 +702,24 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       includeContents: editablePath !== null,
       ignoreWhitespace,
     };
-  }, [selection, ignoreWhitespace, editablePath]);
+  })();
   const diff = useScmDiff(target, diffInput);
   const patch = diff.data?.patch;
-  const renderablePatch = useMemo(
-    () => getRenderablePatch(patch, `scm-diff:${resolvedTheme}`),
-    [patch, resolvedTheme],
-  );
+  const renderablePatch = getRenderablePatch(patch, `scm-diff:${resolvedTheme}`);
 
-  const diffRenderOptions = useMemo<FileDiffOptions<undefined, undefined>>(
-    () => ({
-      collapsed: false,
-      diffStyle,
-      overflow: wordWrap ? ("wrap" as const) : ("scroll" as const),
-      theme: resolveDiffThemeName(resolvedTheme),
-      preferredHighlighter: PREFERRED_HIGHLIGHTER,
-    }),
-    [diffStyle, resolvedTheme, wordWrap],
-  );
+  const diffRenderOptions: FileDiffOptions<undefined, undefined> = {
+    collapsed: false,
+    diffStyle,
+    overflow: wordWrap ? "wrap" : "scroll",
+    theme: resolveDiffThemeName(resolvedTheme),
+    preferredHighlighter: PREFERRED_HIGHLIGHTER,
+  };
 
   /**
    * The editor opens only once the whole-file text has arrived and the path
    * resolves inside the project, which is what the write is relative to.
    */
-  const editTarget = useMemo<ScmEditTarget | null>(() => {
+  const editTarget = ((): ScmEditTarget | null => {
     if (editablePath === null || !diff.data || diff.data.binary) return null;
     const { relative } = workspacePathFor(editablePath, repositoryState?.root ?? null, props.cwd);
     if (relative === null) return null;
@@ -758,20 +730,18 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       oldContents: diff.data.oldContents,
       newContents: diff.data.newContents,
     };
-    // `workspacePath` reads the repository root from the status query, which
-    // has settled by the time a diff has data.
-  }, [editablePath, diff.data, props.environmentId, props.cwd, repositoryState?.root]);
+  })();
 
-  // Save on the chord every editor uses. Claimed only while the caret sits in
-  // this diff, so the browser's own Save Page keeps working everywhere else.
-  // `document.activeElement` stops at the renderer's shadow host, which is the
-  // node inside the diff body; the caret itself is one level further in.
-  const saveEditRef = useRef(saveEdit);
-  useEffect(() => {
-    saveEditRef.current = saveEdit;
+  // Mod+S is claimed only while the caret is in this diff, and even with nothing to save: the
+  // composer's stash stands aside here, so the browser would otherwise open Save Page.
+  // `document.activeElement` stops at the renderer's shadow host; the caret is one level deeper.
+  const saveIfDirty = useStableCallback(() => {
+    if (dirtyEdit) void saveEdit();
   });
+  const editable = editTarget !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the window keydown listener for the save chord registered while this diff is editable
   useEffect(() => {
-    if (!dirtyEdit) return;
+    if (!editable) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "s" || !(event.metaKey || event.ctrlKey) || event.altKey) return;
       const body = diffBodyRef.current;
@@ -779,11 +749,11 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       if (!body || !host || !body.contains(host)) return;
       if (!isEditableFocused(deepActiveElement())) return;
       event.preventDefault();
-      void saveEditRef.current();
+      saveIfDirty();
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [dirtyEdit]);
+  }, [editable, saveIfDirty]);
 
   /**
    * Scroll the diff to the run of changed lines before or after what is on
@@ -879,7 +849,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
       selection.kind === "commit"
         ? [selection.path ? fileName(selection.path) : null, selection.subject || selection.sha]
             .filter((part) => part !== null && part.length > 0)
-            .join(" — ")
+            .join(": ")
         : selection.kind === "compare"
           ? `${fileName(selection.path)} (${selection.label}) ↔ ${fileName(selection.path)} (Working Tree)`
           : `${fileName(selection.entry.path)} (${selection.staged ? "Staged" : "Working Tree"})`;
@@ -940,7 +910,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
             </span>
           ) : null}
           {savingEdit ? (
-            <span className="shrink-0 text-[11px] text-muted-foreground">Saving…</span>
+            <span className="shrink-0 text-2xs text-muted-foreground">Saving…</span>
           ) : null}
           {/* Takes the slack the title used to, so saving and discarding stay
               against the file's name while the rest keeps to the right. */}
@@ -949,9 +919,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
               than restricted, so the one case that reaches it says why. */}
           {editablePath !== null && editTarget === null && diff.data && !diff.data.binary ? (
             <Tooltip>
-              <TooltipTrigger
-                render={<span className="shrink-0 text-[11px] text-muted-foreground" />}
-              >
+              <TooltipTrigger render={<span className="shrink-0 text-2xs text-muted-foreground" />}>
                 Read-only
               </TooltipTrigger>
               <TooltipPopup side="bottom">
@@ -960,7 +928,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
             </Tooltip>
           ) : null}
           {diff.data ? (
-            <span className="shrink-0 font-mono text-[11px] tabular-nums">
+            <span className="shrink-0 font-mono text-2xs tabular-nums">
               <span className="text-success">+{diff.data.insertions}</span>{" "}
               <span className="text-destructive-foreground">−{diff.data.deletions}</span>
             </span>
@@ -988,7 +956,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
               This file is binary, so there is no text diff to show.
             </p>
           ) : renderablePatch?.kind === "files" ? (
-            <div ref={diffBodyRef}>
+            <div ref={diffBodyRef} data-owns-save-shortcut={editTarget ? "" : undefined}>
               <DiffWorkerPoolProvider>
                 {editTarget ? (
                   <ScmEditableDiff
@@ -1039,7 +1007,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
     <div ref={rootRef} className="flex min-h-0 min-w-0 flex-1 flex-col">
       <header className="flex h-8 shrink-0 items-center gap-1.5 border-border/60 border-b px-2">
         <span className="shrink-0 font-medium text-foreground text-xs">Source Control</span>
-        <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
+        <span className="min-w-0 flex-1 truncate text-2xs text-muted-foreground">
           {repository?.branch ?? repository?.headSha ?? props.projectName}
           {repository?.operation && repository.operation !== "none"
             ? ` · ${repository.operation} in progress`
@@ -1068,7 +1036,7 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
                 <span className="flex items-center gap-0.5">
                   <RotateCw className={cn("size-3.5", busy && "animate-spin")} />
                   {repository.ahead + repository.behind > 0 ? (
-                    <span className="text-[10px] tabular-nums">
+                    <span className="text-3xs tabular-nums">
                       {repository.behind > 0 ? `↓${repository.behind}` : ""}
                       {repository.ahead > 0 ? `↑${repository.ahead}` : ""}
                     </span>
@@ -1117,9 +1085,8 @@ function SourceControlPanelContent(props: SourceControlPanelProps) {
           showRefreshing ? "opacity-100" : "opacity-0",
         )}
       >
-        <div className="h-full w-1/3 animate-[scm-refresh_1.1s_ease-in-out_infinite] bg-info" />
+        <div className="h-full w-1/3 animate-scm-refresh bg-info" />
       </div>
-      <style>{SCM_REFRESH_KEYFRAMES}</style>
 
       <ScmRefPickerDialog
         open={picker !== null}

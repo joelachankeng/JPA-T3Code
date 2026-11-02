@@ -52,6 +52,7 @@ After a merge, grep for each one and confirm it is still there.
 | `scm.*` and `projects.renameEntry` / `deleteEntry` scopes                                                         | `apps/server/src/auth/RpcAuthorization.ts`, `packages/contracts/src/clientRpcPermissions.ts` | Requests are refused as unauthorized                                                                             |
 | Mocked `resolveFileContextMenuAbsolutePath`                                                                       | `apps/web/src/components/files/FileBrowserPanel.browser.test.tsx`                            | Upstream rewrites this test; without the mock it fails to load                                                   |
 | `wordWrapOverrideAtom` in place of the `wordWrapOverride` `useState`                                              | `apps/web/src/components/files/FilePreviewPanel.tsx`                                         | Line wrap resets to the default on every thread switch                                                           |
+| `!isInSaveShortcutOwner(event.target)` in the `composer.stash` registration's `when`                              | `apps/web/src/components/chat/useComposerStash.ts`                                           | `Ctrl`/`Cmd`+`S` in the source control diff also stashes the composer prompt                                     |
 
 **Why the server has a separate scm RPC group:** one group holding every method exceeds
 TypeScript's type instantiation depth limit. Upstream has its own split (`SplitWsRpcGroup`
@@ -177,6 +178,11 @@ Hover it for the reason.
 - [ ] Toolbar buttons work on a diff.
 - [ ] In a scratch repo, type into a working-tree diff, save, and check the file on disk;
       discard really discards.
+- [ ] Saving a file that starts with a UTF-8 byte-order mark keeps the mark: `git diff`
+      shows only the line you edited.
+- [ ] `Ctrl`/`Cmd`+`S` in the diff saves without opening the composer's stash, and does
+      nothing (no Save Page dialog) when there is nothing to save. In the composer it still
+      stashes.
 
 ## File timelines
 

@@ -61,6 +61,7 @@ import {
   useState,
 } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
+import { isInSaveShortcutOwner } from "../../lib/saveShortcutOwner";
 import { isInSideChatPane } from "../../lib/sideChatPane";
 import { useStableCallback } from "../../hooks/useStableCallback";
 
@@ -703,7 +704,7 @@ export function useComposerStash(input: {
       {
         capture: true,
         context: readShortcutContext,
-        when: (event) => !isInSideChatPane(event.target),
+        when: (event) => !isInSideChatPane(event.target) && !isInSaveShortcutOwner(event.target),
       },
     );
   }, [backgroundThread, handleStashShortcut, readShortcutContext]);
