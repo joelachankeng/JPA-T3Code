@@ -154,7 +154,7 @@ make your first commit before pushing.
 
 ## The Source Control surface
 
-Open **Source control** from a thread's panel launcher, the panel's **+** menu, or by pressing `S`
+Open **Source control** from a thread's panel launcher, the panel's **+** menu, or by pressing `G`
 while the launcher is showing. It works on the repository the thread's project sits in, whether that
 repository is on this machine or on a remote environment.
 

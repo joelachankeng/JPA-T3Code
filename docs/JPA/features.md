@@ -42,6 +42,7 @@ After a merge, grep for each one and confirm it is still there.
 | `RIGHT_PANEL_STORAGE_VERSION` is the fork's own bump (currently 15)                                               | `apps/web/src/rightPanelStore.ts`                                                            | Saved panel state from an older build fails to load. If upstream raises its own version, set the fork's above it |
 | `addSourceControlSurfaceStable`, `openTimelineSurfaceStable`, `revealInFilesSurfaceStable`                        | `apps/web/src/components/chat/useRightPanelActions.ts`, used by `ChatView.tsx`               | Launcher item and timeline links do nothing                                                                      |
 | `onAddSourceControl` / `sourceControlAvailable` props                                                             | `ChatView.tsx` (via `ChatRightPanel`) and `components/pullRequest/PullRequestsPage.tsx`      | Typecheck fails, or the launcher item disappears                                                                 |
+| Source control launcher letter `G`, unique among the launcher's `shortcut` letters                                | `apps/web/src/components/RightPanelTabs.tsx` (both launcher action lists)                    | A duplicate letter silently loses: the first match wins, so the other surface has no key                         |
 | Surface rendering for `source-control` and `timeline`                                                             | `apps/web/src/components/chat/RightPanelSurfaceContent.tsx`, `RightPanelTabs.tsx`            | Tab opens empty                                                                                                  |
 | `fileSurfaceFocus` in the shortcut context                                                                        | `apps/web/src/shortcuts/dispatcher.ts` (`readFocusContext`)                                  | `mod+f` / `mod+h` stay on thread find                                                                            |
 | `installComposedRangesCompat()` at startup                                                                        | `apps/web/src/appInit.tsx` (`startAppServices`)                                              | Typing and pasting into the file editor fail on iOS Safari                                                       |
@@ -121,7 +122,8 @@ and desktop, for local and remote environments. User guide:
 
 **Verify**
 
-- [ ] **Source control** appears in the panel launcher, the **+** menu, and on `S`.
+- [ ] **Source control** appears in the panel launcher, the **+** menu, and on `G`
+      (upstream's Side chat owns `S`).
 - [ ] Changes list, branch, ahead/behind, and the graph match `git status` and `git log`.
 - [ ] Stage, unstage, and commit in a scratch repo, confirmed by `git log`.
 - [ ] An edit made outside the app shows up within about 5 seconds.
