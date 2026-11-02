@@ -255,5 +255,23 @@ it.layer(TestLayer)("SourceControlPanelService", (it) => {
         assert.include(result.patch, "+alpha edited");
       }),
     );
+
+    it.effect("keeps a byte-order mark in the working tree contents it reads", () =>
+      Effect.gen(function* () {
+        const root = yield* makeRepository;
+        const service = yield* SourceControlPanelService.SourceControlPanelService;
+        write(root, "docs/a.md", "﻿alpha edited\n");
+
+        const result = yield* service.diff({
+          cwd: root,
+          path: "docs/a.md",
+          from: { _tag: "index" },
+          to: { _tag: "working" },
+        });
+
+        // The editor saves this text back, so a lost mark would be removed from the file.
+        assert.strictEqual(result.newContents, "﻿alpha edited\n");
+      }),
+    );
   });
 });

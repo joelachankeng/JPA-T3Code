@@ -999,7 +999,11 @@ const make = Effect.gen(function* () {
       const root = yield* repositoryRoot(cwd);
       const base = root ?? cwd;
       const absolute = path.isAbsolute(filePath) ? filePath : path.join(base, filePath);
-      const text = yield* fileSystem.readFileString(absolute).pipe(Effect.orElseSucceed(() => ""));
+      // readFileString strips a byte-order mark; the editable diff saves this text back verbatim.
+      const text = yield* fileSystem.readFile(absolute).pipe(
+        Effect.map((bytes) => new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes)),
+        Effect.orElseSucceed(() => ""),
+      );
       return { text, binary: false };
     }
     const revision = revisionOf(side);

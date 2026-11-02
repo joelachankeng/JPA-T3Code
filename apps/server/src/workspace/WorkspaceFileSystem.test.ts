@@ -198,6 +198,18 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
+    it.effect("keeps a UTF-8 byte-order mark so saving writes it back", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "bom.txt", "﻿hello\n");
+
+        const result = yield* workspaceFileSystem.readFile({ cwd, relativePath: "bom.txt" });
+
+        expect(result.contents).toBe("﻿hello\n");
+      }),
+    );
+
     it.effect("finishes short reads before decoding UTF-8 text", () =>
       Effect.gen(function* () {
         const files = yield* WorkspaceFileSystem.WorkspaceFileSystem;

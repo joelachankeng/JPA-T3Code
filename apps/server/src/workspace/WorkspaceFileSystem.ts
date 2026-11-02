@@ -476,7 +476,10 @@ export const make = Effect.gen(function* () {
           return {
             relativePath: target.relativePath,
             // Streaming decode drops a character the byte limit split, instead of ending in U+FFFD.
-            contents: new TextDecoder("utf-8").decode(fileBytes, { stream: truncated }),
+            // ignoreBOM keeps the mark in the text, so saving the editor's buffer writes it back.
+            contents: new TextDecoder("utf-8", { ignoreBOM: true }).decode(fileBytes, {
+              stream: truncated,
+            }),
             byteLength: stat.size,
             truncated,
           };
