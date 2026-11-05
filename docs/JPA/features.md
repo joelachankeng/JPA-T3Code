@@ -53,6 +53,7 @@ After a merge, grep for each one and confirm it is still there.
 | Mocked `resolveFileContextMenuAbsolutePath`                                                                       | `apps/web/src/components/files/FileBrowserPanel.browser.test.tsx`                            | Upstream rewrites this test; without the mock it fails to load                                                   |
 | `wordWrapOverrideAtom` in place of the `wordWrapOverride` `useState`                                              | `apps/web/src/components/files/FilePreviewPanel.tsx`                                         | Line wrap resets to the default on every thread switch                                                           |
 | `!isInSaveShortcutOwner(event.target)` in the `composer.stash` registration's `when`                              | `apps/web/src/components/chat/useComposerStash.ts`                                           | `Ctrl`/`Cmd`+`S` in the source control diff also stashes the composer prompt                                     |
+| `isSoftwareKeyboardOpen \|\| !hasFinePointer` passed to `composerCommandKeyHandler`                               | `apps/web/src/components/chat/ChatComposer.tsx`                                              | Enter sends the prompt on iPhone Safari after the first keyboard session                                         |
 
 **Why the server has a separate scm RPC group:** one group holding every method exceeds
 TypeScript's type instantiation depth limit. Upstream has its own split (`SplitWsRpcGroup`
@@ -307,6 +308,26 @@ memory only, so a reload falls back to the Settings default.
 - [ ] On thread A, open another surface (diff or browser), then return to the file: still
       wrapped.
 - [ ] Thread B's file viewer still uses the Settings default.
+
+## Enter inserts a newline on phones
+
+**What it does:** on a device with no mouse or trackpad (an iPhone, an Android phone), Enter
+in the composer always inserts a newline; send with the send button. Devices with a fine
+pointer (desktop, an iPad with a trackpad keyboard) keep upstream's behavior.
+
+**How it works:** upstream decides from `useSoftwareKeyboardOpen`, which guesses from
+visual viewport resizes. On iOS Safari that guess goes wrong after the first keyboard
+session (until Safari is force-quit), so Enter sends. The fork also treats a device that
+fails `(any-pointer: fine)` as having a software keyboard.
+
+**References:** `hasFinePointer` in `apps/web/src/components/chat/ChatComposer.tsx`;
+upstream's detector in `apps/web/src/lib/softwareKeyboard.ts`.
+
+**Verify**
+
+- [ ] On iPhone Safari, Enter adds a newline on first load, after switching threads, and
+      after sending a message.
+- [ ] On desktop, Enter still sends.
 
 ## Fork branding
 

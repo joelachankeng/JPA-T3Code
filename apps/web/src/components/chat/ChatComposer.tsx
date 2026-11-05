@@ -1032,6 +1032,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isSoftwareKeyboardOpen = useSoftwareKeyboardOpen();
+  // iOS Safari's viewport resizes are too unreliable to detect its keyboard, so a device
+  // with no mouse or trackpad always types on a software keyboard where Enter means newline.
+  const hasFinePointer = useMediaQuery("(any-pointer: fine)");
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const [composerSubmissionError, setComposerSubmissionError] = useState<string | null>(null);
   const [providerInputSubmissionError, setProviderInputSubmissionError] = useState<string | null>(
@@ -2219,7 +2222,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       phase,
       isCompacting,
       followUpBehavior,
-      isSoftwareKeyboardOpen,
+      isSoftwareKeyboardOpen: isSoftwareKeyboardOpen || !hasFinePointer,
       planModeUiEnabled,
       isLiteralPendingAnswer,
       pendingUserInputs,
